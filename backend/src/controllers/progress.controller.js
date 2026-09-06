@@ -22,6 +22,47 @@ const actionSchema = Joi.object({
   itemId: Joi.alternatives().try(Joi.string(), Joi.number()).optional(),
 });
 
+const snapshotTransportSchema = Joi.object({
+  migrationKey: Joi.string().trim().max(255).optional(),
+  xp: Joi.number().integer().min(0).max(100000).optional(),
+  totalXp: Joi.number().integer().min(0).max(100000).optional(),
+  gold: Joi.number().integer().min(0).max(100000).optional(),
+  streak: Joi.number().integer().min(0).max(365).optional(),
+  streakDays: Joi.number().integer().min(0).max(365).optional(),
+  wordsLearned: Joi.number().integer().min(0).max(10000).optional(),
+  savedWords: Joi.array().items(Joi.string().max(100)).max(500).optional(),
+  questUnits: Joi.object().max(20).optional(),
+  ownedItemIds: Joi.array().items(Joi.alternatives().try(Joi.string().max(50), Joi.number())).max(50).optional(),
+  equippedIds: Joi.array().items(Joi.alternatives().try(Joi.string().max(50), Joi.number())).max(10).optional(),
+  missions: Joi.array().items(Joi.object()).max(20).optional(),
+  snapshotAt: Joi.alternatives().try(Joi.number(), Joi.string()).optional(),
+  completedLessons: Joi.array().optional(),
+  unlockedQuests: Joi.array().optional(),
+  lastResetDate: Joi.string().max(50).optional(),
+  earnedXp: Joi.forbidden(),
+  goldEarned: Joi.forbidden(),
+  missionBonusXp: Joi.forbidden(),
+  currentLevel: Joi.forbidden(),
+  goldAfter: Joi.forbidden(),
+  reward: Joi.forbidden(),
+  price: Joi.forbidden(),
+}).unknown(false);
+
+const migrateGuestSchema = Joi.object({
+  migrationKey: Joi.string().trim().min(1).max(255).regex(/^[a-zA-Z0-9_-]{1,255}$/).required(),
+  snapshot: snapshotTransportSchema.optional().default({}),
+  userId: Joi.any().strip(),
+  user_id: Joi.any().strip(),
+  accountId: Joi.any().strip(),
+  earnedXp: Joi.forbidden(),
+  goldEarned: Joi.forbidden(),
+  missionBonusXp: Joi.forbidden(),
+  currentLevel: Joi.forbidden(),
+  goldAfter: Joi.forbidden(),
+  reward: Joi.forbidden(),
+  price: Joi.forbidden(),
+}).unknown(true);
+
 class ProgressController {
   /**
    * POST /api/v1/progress/action
@@ -124,6 +165,50 @@ class ProgressController {
       const stats = await progressService.getUserStats(req.user.id);
       return ApiResponse.success(res, { data: stats });
     } catch (err) {
+      next(err);
+    }
+  }
+
+  /**
+   * POST /api/v1/progress/migrate-guest
+   * Migrates guest progression into authenticated user's player profile (Phase 2C.3)
+   */
+  async migrateGuest(req, res, next) {
+    try {
+      const { error, value } = migrateGuestSchema.validate(req.body, {
+        abortEarly: false,
+        stripUnknown: true,
+      });
+
+      if (error) {
+        const errors = error.details.map((d) => ({
+          field: d.path.join('.'),
+          message: d.message,
+        }));
+        return ApiResponse.badRequest(res, 'Validation failed', errors);
+      }
+
+      const rawSnapshot = {
+        ...(value.snapshot || {}),
+        migrationKey: value.migrationKey,
+      };
+
+      const result = await progressService.migrateGuestProgress(req.user.id, rawSnapshot);
+
+      return ApiResponse.success(res, {
+        data: result,
+        message: result.alreadyMigrated
+          ? 'Guest progress already migrated'
+          : 'Guest progress migrated successfully',
+      });
+    } catch (err) {
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({
+          success: false,
+          error: err.message,
+          message: err.message,
+        });
+      }
       next(err);
     }
   }
