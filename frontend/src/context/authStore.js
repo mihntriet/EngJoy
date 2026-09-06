@@ -17,12 +17,11 @@ export const useAuthStore = create(
 
       setUser: (user) => set({ user }),
 
-      logout: () => {
+      logout: async () => {
         set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false });
         try {
-          import('./progressStore').then(({ useProgressStore }) => {
-            useProgressStore.getState().resetProgress();
-          });
+          const { useProgressStore } = await import('./progressStore.js');
+          useProgressStore.getState().resetProgress();
         } catch (err) {
           console.warn('Failed to reset progress on logout:', err);
         }

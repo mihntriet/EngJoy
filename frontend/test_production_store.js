@@ -49,7 +49,7 @@ function assert(condition, message) {
 // Reset store helper
 function resetStore(customState = {}) {
   useAuthStore.setState({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false });
-  useProgressStore.getState().resetProgress();
+  useProgressStore.getState().resetProgress({ forceClearGuestSnapshot: true });
   useProgressStore.setState({
     xp: 0,
     level: 1,
@@ -57,6 +57,7 @@ function resetStore(customState = {}) {
     gold: 0,
     wordsLearned: 0,
     hasUnsyncedGuestProgress: false,
+    pendingGuestMigration: null,
     missions: JSON.parse(JSON.stringify(INITIAL_MISSIONS)),
     quests: JSON.parse(JSON.stringify(INITIAL_QUESTS)),
     questUnits: JSON.parse(JSON.stringify(INITIAL_QUEST_UNITS)),
@@ -219,40 +220,21 @@ async function runProductionTests() {
     assert(useProgressStore.getState().hasUnsyncedGuestProgress === true, "hasUnsyncedGuestProgress is true");
   }
 
-  console.log("\n--- TEST L: Authenticated mode successful persistence in production store ---");
+  console.log("\n--- TEST L: Authenticated mode submitScore protection (No arbitrary reward injection) ---");
   {
-    resetStore();
+    resetStore({ xp: 100, level: 1, gold: 50 });
     useAuthStore.getState().setAuth({ id: 'user-1' }, 'token-1', 'refresh-1');
 
-    // Intercept axiosClient.post
-    let interceptedPayload = null;
-    const originalPost = axiosClient.post;
-    axiosClient.post = async (url, payload) => {
-      interceptedPayload = payload;
-      return {
-        data: {
-          totalXp: 500,
-          currentLevel: 3,
-          streakDays: 5,
-        }
-      };
-    };
-
-    try {
-      const res = await useProgressStore.getState().submitScore(60, { wordsLearned: 15 });
-      assert(res.success === true, "Authenticated submitScore succeeds");
-      assert(interceptedPayload.earnedXp === 60, "Single atomic payload earnedXp: 60");
-      const s = useProgressStore.getState();
-      assert(s.xp === 500, "Server totalXp (500) adopted by store");
-      assert(s.level === 3, "Server currentLevel (3) adopted by store");
-      assert(s.streak === 5, "Server streakDays (5) adopted by store");
-      assert(s.hasUnsyncedGuestProgress === false, "hasUnsyncedGuestProgress is false for auth");
-    } finally {
-      axiosClient.post = originalPost;
-    }
+    // Authenticated user calling legacy submitScore directly
+    const res = await useProgressStore.getState().submitScore(60, { wordsLearned: 15 });
+    assert(res.success === true, "Authenticated submitScore handled safely");
+    const s = useProgressStore.getState();
+    assert(s.xp === 100, "Store XP remains 100 (No client reward injection for auth user)");
+    assert(s.gold === 50, "Store Gold remains 50");
+    assert(s.hasUnsyncedGuestProgress === false, "hasUnsyncedGuestProgress is false for auth");
   }
 
-  console.log("\n--- TEST M: Slow / Failing API request for Authenticated User ---");
+  console.log("\n--- TEST M: Authenticated action API failure preserves state (No phantom rewards) ---");
   {
     resetStore({ xp: 100, gold: 50 });
     useAuthStore.getState().setAuth({ id: 'user-1' }, 'token-1', 'refresh-1');
@@ -263,12 +245,12 @@ async function runProductionTests() {
     };
 
     try {
-      const res = await useProgressStore.getState().submitScore(60, { wordsLearned: 15 });
+      const res = await useProgressStore.getState().completeUnitLesson(1, 1);
       assert(res.success === false, "Returns failure on API error");
       const s = useProgressStore.getState();
       assert(s.xp === 100, "Store XP remains 100 (NO PHANTOM XP!)");
       assert(s.gold === 50, "Store Gold remains 50 (NO PHANTOM GOLD!)");
-      assert(s.missions.find(m => m.type === 'words').done === 0, "Missions not committed locally on API failure");
+      assert(s.questUnits[1][0].status === 'active', "Unit status not changed on API error");
     } finally {
       axiosClient.post = originalPost;
     }
@@ -339,10 +321,21 @@ async function runProductionTests() {
       if (shouldFail) throw new Error('Network timeout');
       return {
         data: {
-          totalXp: 60,
-          currentLevel: 1,
-          streakDays: 1,
-        }
+          profile: {
+            total_xp: 60,
+            current_level: 1,
+            streak_days: 1,
+            gold: 30,
+            quest_units: {
+              '1': [{ id: 1, status: 'done' }, { id: 2, status: 'active' }],
+            },
+          },
+          reward: {
+            xp: 60,
+            gold: 30,
+            wordsLearned: 15,
+          },
+        },
       };
     };
 

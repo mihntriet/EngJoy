@@ -53,7 +53,7 @@ export default function Register() {
           champion: selectedChamp,
         };
         setAuth(enhancedUser, accessToken, refreshToken);
-        await useProgressStore.getState().syncGuestData();
+        await useProgressStore.getState().fetchUserProgress();
         toast.success(`Gia nhập thành công! Chào mừng ${displayName}`);
         navigate('/');
         return;

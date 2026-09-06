@@ -45,6 +45,8 @@ export const BACKEND_ENDPOINTS = {
   PROGRESS: {
     BASE: '/progress',
     MY_PROGRESS: '/progress',
+    PROFILE: '/progress/profile',
+    ACTION: '/progress/action',
     STATS: '/progress/stats',
     BY_PHASE: (phaseId) => `/progress/phase/${phaseId}`,
     START: '/progress',

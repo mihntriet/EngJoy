@@ -13,6 +13,7 @@ export default function Arena() {
   const [submitted, setSubmitted] = useState(false);
   const [time, setTime] = useState(15);
   const timerRef = useRef(null);
+  const quizKeyRef = useRef(null);
 
   useEffect(() => {
     if (active === "quiz" && picked === null && !done) {
@@ -44,11 +45,14 @@ export default function Arena() {
         setDone(true);
         if (!submitted) {
           setSubmitted(true);
-          const earnedXp = Math.min(finalScore * 50, 150);
-          useProgressStore.getState().submitScore(earnedXp, {
-            score: Math.round((finalScore / QUIZ_Q.length) * 100),
-            isQuiz: true,
-          });
+          const quizScore = Math.round((finalScore / QUIZ_Q.length) * 100);
+          if (!quizKeyRef.current) {
+            quizKeyRef.current =
+              typeof crypto !== 'undefined' && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `quiz_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+          }
+          useProgressStore.getState().completeQuiz(quizScore, quizKeyRef.current);
         }
       } else {
         setQIdx((q) => q + 1);
@@ -66,6 +70,7 @@ export default function Arena() {
     setDone(false);
     setSubmitted(false);
     setTime(15);
+    quizKeyRef.current = null;
   }
 
   function restart() {
@@ -75,6 +80,7 @@ export default function Arena() {
     setDone(false);
     setSubmitted(false);
     setTime(15);
+    quizKeyRef.current = null;
   }
 
   if (active === "quiz") {

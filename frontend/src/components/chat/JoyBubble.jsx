@@ -28,9 +28,9 @@ export default function JoyBubble() {
     setTyping(true);
 
     const now = Date.now();
-    if (t.length >= 3 && now - lastChatTimeRef.current >= 4000) {
+    if (t.length >= 3 && now - lastChatTimeRef.current >= 3000) {
       lastChatTimeRef.current = now;
-      useProgressStore.getState().submitScore(0, { isChat: true, silent: true });
+      useProgressStore.getState().sendChatMessage(t);
     }
     setTimeout(() => {
       const l = t.toLowerCase();

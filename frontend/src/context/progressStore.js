@@ -1,16 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import toast from 'react-hot-toast';
-import axiosClient from '../api/axiosClient';
-import { useAuthStore } from './authStore';
+import { progressApi } from '../api/userProgress.api.js';
+import { useAuthStore } from './authStore.js';
 
-/**
- * Công thức tính cấp độ RPG dựa trên tổng XP:
- * - Cấp 1: 0 - 199 XP
- * - Cấp 2: 200 - 499 XP (cần thêm 300 XP)
- * - Cấp 3: 500 - 899 XP (cần thêm 400 XP)
- * - Cấp 4: 900 - 1399 XP (cần thêm 500 XP)...
- */
+// ─── Thuật toán tính Level & XP tích lũy toàn cục ────────────────────────────
 export function calculateLevelInfo(totalXp) {
   let level = 1;
   let threshold = 200;
@@ -105,6 +99,7 @@ export const useProgressStore = create(
       wordsLearned: 0,
       isSyncing: false,
       hasUnsyncedGuestProgress: false,
+      pendingGuestMigration: null,
       lastResetDate: new Date().toISOString().slice(0, 10),
 
       // Lộ trình, Nhiệm vụ, Kho đồ & Từ vựng
@@ -116,7 +111,119 @@ export const useProgressStore = create(
       ownedItemIds: [],
       equippedIds: [],
 
-      // ─── 0. KIỂM TRA RESET NHIỆM VỤ HÀNG NGÀY ─────────────────────
+      // ─── 0.0 BẮT SNAPSHOT TIẾN TRÌNH KHÁCH CHỜ MIGRATION (PHASE 2C) ──
+      // Tách biệt hoàn toàn trách nhiệm giữa Guest Snapshot và Server Hydration.
+      // Được gọi ở ranh giới Authentication TRƯỚC KHI nạp Server Profile.
+      capturePendingGuestMigration: () => {
+        const state = get();
+        // Nếu đã có snapshot được lưu từ trước, TUYỆT ĐỐI không ghi đè
+        if (state.pendingGuestMigration) {
+          return state.pendingGuestMigration;
+        }
+
+        // Chỉ bắt snapshot khi thực sự có dữ liệu tiến trình Khách chưa đồng bộ
+        const hasWork =
+          state.hasUnsyncedGuestProgress ||
+          state.xp > 0 ||
+          state.gold > 0 ||
+          state.wordsLearned > 0 ||
+          (state.savedWords && state.savedWords.length > 0) ||
+          (state.ownedItemIds && state.ownedItemIds.length > 0);
+
+        if (!hasWork) {
+          return null;
+        }
+
+        const snapshot = {
+          xp: state.xp,
+          gold: state.gold,
+          streak: state.streak,
+          wordsLearned: state.wordsLearned,
+          savedWords: [...(state.savedWords || [])],
+          missions: JSON.parse(JSON.stringify(state.missions || INITIAL_MISSIONS)),
+          questUnits: JSON.parse(JSON.stringify(state.questUnits || INITIAL_QUEST_UNITS)),
+          ownedItemIds: [...(state.ownedItemIds || [])],
+          equippedIds: [...(state.equippedIds || [])],
+          lastResetDate: state.lastResetDate,
+          snapshotAt: Date.now(),
+        };
+
+        set({
+          pendingGuestMigration: snapshot,
+          hasUnsyncedGuestProgress: true,
+        });
+
+        return snapshot;
+      },
+
+      // ─── 0.1 ÁP DỤNG PROFILE TỪ SERVER CHO USER AUTHENTICATED ───────
+      // Điểm tập trung duy nhất (Canonical mapping path) đưa PostgreSQL profile vào Zustand.
+      // Đơn nhiệm: Chỉ cập nhật các trường tiến trình authoritative của server.
+      applyServerProfile: (serverData) => {
+        if (!serverData) return;
+        const profile = serverData.profile || serverData.data || serverData;
+        const totalXp = parseInt(profile.totalXp ?? profile.total_xp, 10) || 0;
+        const currentLevel =
+          parseInt(profile.currentLevel ?? profile.current_level, 10) ||
+          calculateLevelInfo(totalXp).level;
+        const gold = parseInt(profile.gold, 10) || 0;
+        const streak = parseInt(profile.streakDays ?? profile.streak_days, 10) || 0;
+        const wordsLearned = parseInt(profile.wordsLearned ?? profile.words_learned, 10) || 0;
+        const savedWords = Array.isArray(profile.savedWords ?? profile.saved_words)
+          ? (profile.savedWords ?? profile.saved_words)
+          : [];
+        const missions = Array.isArray(profile.missions) ? profile.missions : get().missions;
+
+        // Hòa nhập questUnits: Đảm bảo giữ metadata tiêu đề và số từ của client
+        const serverUnits = profile.questUnits ?? profile.quest_units ?? {};
+        const mergedQuestUnits = { ...INITIAL_QUEST_UNITS };
+        Object.keys(mergedQuestUnits).forEach((qId) => {
+          const initList = mergedQuestUnits[qId] || [];
+          const sUnits = serverUnits[qId] || serverUnits[String(qId)] || [];
+          if (Array.isArray(sUnits) && sUnits.length > 0) {
+            mergedQuestUnits[qId] = initList.map((initU) => {
+              const su = sUnits.find((u) => u.id === initU.id);
+              return su ? { ...initU, status: su.status } : initU;
+            });
+          }
+        });
+
+        // Tính toán trạng thái các Quest từ mergedQuestUnits
+        const updatedQuests = (get().quests || INITIAL_QUESTS).map((q) => {
+          const units = mergedQuestUnits[q.id] || [];
+          const doneCount = units.filter((u) => u.status === 'done').length;
+          const allDone = units.length > 0 && doneCount >= units.length;
+          return {
+            ...q,
+            done: doneCount,
+            status: allDone ? 'complete' : q.status === 'locked' ? 'locked' : 'active',
+          };
+        });
+
+        // Chuẩn hóa item IDs
+        const rawOwned = profile.ownedItemIds ?? profile.owned_item_ids ?? [];
+        const rawEquipped = profile.equippedIds ?? profile.equipped_ids ?? [];
+        const ownedItemIds = rawOwned.map((id) => (isNaN(Number(id)) ? id : Number(id)));
+        const equippedIds = rawEquipped.map((id) => (isNaN(Number(id)) ? id : Number(id)));
+
+        set({
+          xp: totalXp,
+          level: currentLevel,
+          gold,
+          streak,
+          wordsLearned,
+          savedWords,
+          missions,
+          questUnits: mergedQuestUnits,
+          quests: updatedQuests,
+          ownedItemIds,
+          equippedIds,
+          lastResetDate: profile.lastResetDate ?? profile.last_reset_date ?? get().lastResetDate,
+          // TUYỆT ĐỐI KHÔNG can thiệp vào pendingGuestMigration hoặc hasUnsyncedGuestProgress
+        });
+      },
+
+      // ─── 0.1 KIỂM TRA RESET NHIỆM VỤ HÀNG NGÀY (GUEST) ──────────────
       checkDailyReset: () => {
         const today = new Date().toISOString().slice(0, 10);
         const state = get();
@@ -128,18 +235,386 @@ export const useProgressStore = create(
         }
       },
 
-      // ─── 1. TÍCH LŨY XP & ĐỒNG BỘ ──────────────────────────────────
-      // Single-owner duy nhất cho mọi tính toán thưởng XP, Gold, Level và Nhiệm vụ
-      // Sử dụng hàng đợi pendingScorePromise để tuần tự hóa triệt để mọi giao dịch đồng thời
+      // ─── 1. HOÀN THÀNH BÀI HỌC TRONG LỘ TRÌNH ──────────────────────
+      completeUnitLesson: async (questId, unitId, customKey = null) => {
+        const unitKey = `${questId}-${unitId}`;
+        if (inProgressUnits.has(unitKey)) {
+          return { success: false, inProgress: true };
+        }
+
+        const state = get();
+        const units = state.questUnits[questId] || [];
+        const currentUnit = units.find((u) => u.id === unitId);
+
+        if (!currentUnit || currentUnit.status === 'done') {
+          toast('Bài học này bạn đã hoàn thành trước đó!');
+          return { success: false, alreadyDone: true };
+        }
+
+        const authState = useAuthStore.getState();
+        const isAuthenticated = authState.isAuthenticated;
+
+        inProgressUnits.add(unitKey);
+        try {
+          // AUTHENTICATED: Server-authoritative action qua POST /progress/action
+          if (isAuthenticated) {
+            const idempotencyKey = customKey || `unit_${questId}_${unitId}`;
+            try {
+              const res = await progressApi.executeAction({
+                action: 'COMPLETE_UNIT',
+                questId,
+                unitId,
+                idempotencyKey,
+              });
+
+              const payload = res?.data || res;
+              if (payload?.profile) {
+                get().applyServerProfile(payload.profile);
+              }
+
+              const reward = payload?.reward || {};
+              if (reward.alreadyCompleted) {
+                toast('Bài học này bạn đã hoàn thành trước đó!');
+                return { success: true, alreadyDone: true };
+              }
+
+              const earnedXp = reward.xp || 60;
+              const earnedWords = reward.wordsLearned || 15;
+              toast.success(`⚔️ Vượt qua Unit ${unitId}! (+${earnedXp} XP, +${earnedWords} từ mới)`);
+
+              if (reward.missionBonus?.completed?.length) {
+                reward.missionBonus.completed.forEach((title) => {
+                  toast.success(`🎖️ Hoàn thành nhiệm vụ: "${title}"! (+${reward.missionBonus.xp} XP)`, { duration: 3500 });
+                });
+              }
+
+              return { success: true };
+            } catch (err) {
+              console.error('Lỗi khi hoàn thành bài học:', err);
+              toast.error(err.message || 'Không thể kết nối đến máy chủ để hoàn thành bài học. Vui lòng thử lại!');
+              return { success: false, error: err };
+            }
+          }
+
+          // GUEST: Chuẩn bị trạng thái cập nhật tiếp theo của Unit & Quest cục bộ
+          const updatedUnits = units.map((u) => {
+            if (u.id === unitId) return { ...u, status: 'done' };
+            if (u.id === unitId + 1 && u.status === 'locked') return { ...u, status: 'active' };
+            return u;
+          });
+
+          const doneCount = updatedUnits.filter((u) => u.status === 'done').length;
+          const allDone = doneCount >= updatedUnits.length;
+
+          const updatedQuests = state.quests.map((q) => {
+            if (q.id === questId) {
+              return {
+                ...q,
+                done: doneCount,
+                status: allDone ? 'complete' : 'active',
+              };
+            }
+            if (allDone && q.id === questId + 1 && q.status === 'locked') {
+              return { ...q, status: 'active' };
+            }
+            return q;
+          });
+
+          const earnedWords = 15;
+          const earnedXp = 60;
+
+          // Nộp điểm vào hệ thống qua submitScore cho Guest
+          const res = await get().submitScore(earnedXp, { wordsLearned: earnedWords, silent: true });
+
+          if (res?.success) {
+            set({
+              questUnits: {
+                ...get().questUnits,
+                [questId]: updatedUnits,
+              },
+              quests: updatedQuests,
+            });
+            toast.success(`⚔️ Vượt qua Unit ${unitId}! (+${earnedXp} XP, +${earnedWords} từ mới)`);
+            return { success: true };
+          } else {
+            return { success: false, error: res?.error };
+          }
+        } finally {
+          inProgressUnits.delete(unitKey);
+        }
+      },
+
+      // ─── 2. HOÀN THÀNH QUIZ (ARENA) ───────────────────────────────
+      completeQuiz: async (score, idempotencyKey) => {
+        const authState = useAuthStore.getState();
+        const isAuthenticated = authState.isAuthenticated;
+
+        if (isAuthenticated) {
+          const key =
+            idempotencyKey ||
+            (typeof crypto !== 'undefined' && crypto.randomUUID
+              ? crypto.randomUUID()
+              : `quiz_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+
+          try {
+            const res = await progressApi.executeAction({
+              action: 'COMPLETE_QUIZ',
+              score,
+              idempotencyKey: key,
+            });
+
+            const payload = res?.data || res;
+            if (payload?.profile) {
+              get().applyServerProfile(payload.profile);
+            }
+
+            const reward = payload?.reward || {};
+            const earnedXp = reward.xp || 0;
+            const earnedGold = reward.gold || 0;
+
+            if (reward.missionBonus?.completed?.length) {
+              reward.missionBonus.completed.forEach((title) => {
+                toast.success(`🎖️ Hoàn thành nhiệm vụ: "${title}"! (+${reward.missionBonus.xp} XP)`, { duration: 3500 });
+              });
+            }
+
+            if (earnedXp > 0) {
+              toast.success(`🏆 Hoàn thành Quiz! (+${earnedXp} XP, +${earnedGold} Vàng)`);
+            }
+
+            return { success: true, reward, profile: payload?.profile };
+          } catch (err) {
+            console.error('Lỗi khi nộp điểm quiz lên server:', err);
+            toast.error(err.message || 'Không thể lưu kết quả quiz lên máy chủ. Vui lòng thử lại!');
+            return { success: false, error: err };
+          }
+        }
+
+        // GUEST: Tính điểm và nộp cục bộ
+        const earnedXp = Math.min(Math.round((score / 100) * 150), 150);
+        return get().submitScore(earnedXp, { score, isQuiz: true });
+      },
+
+      // ─── 3. LƯU TỪ VỰNG TỪ ĐIỂN (CODEX) ───────────────────────────
+      saveWord: async (rawWord, xpOrCustomKey = 15, customKey = null) => {
+        const word = String(rawWord || '').toLowerCase().trim();
+        if (!word) return { success: false };
+
+        if (get().savedWords.includes(word) || inProgressWords.has(word)) {
+          toast('Từ vựng này bạn đã lưu trước đó!');
+          return { success: false, alreadySaved: true };
+        }
+
+        const authState = useAuthStore.getState();
+        const isAuthenticated = authState.isAuthenticated;
+        const actualCustomKey = typeof xpOrCustomKey === 'string' && !customKey ? xpOrCustomKey : customKey;
+        const xp = typeof xpOrCustomKey === 'number' ? xpOrCustomKey : 15;
+
+        inProgressWords.add(word);
+        try {
+          if (isAuthenticated) {
+            const idempotencyKey = actualCustomKey || `word_${word}`;
+            try {
+              const res = await progressApi.executeAction({
+                action: 'SAVE_WORD',
+                word,
+                idempotencyKey,
+              });
+
+              const payload = res?.data || res;
+              if (payload?.profile) {
+                get().applyServerProfile(payload.profile);
+              }
+
+              const reward = payload?.reward || {};
+              if (reward.alreadySaved) {
+                toast('Từ vựng này bạn đã lưu trước đó!');
+                return { success: false, alreadySaved: true };
+              }
+
+              const earnedXp = reward.xp || 15;
+              toast.success(`📖 Đã ghi nhớ: "${word}"! (+${earnedXp} XP)`);
+
+              if (reward.missionBonus?.completed?.length) {
+                reward.missionBonus.completed.forEach((title) => {
+                  toast.success(`🎖️ Hoàn thành nhiệm vụ: "${title}"! (+${reward.missionBonus.xp} XP)`, { duration: 3500 });
+                });
+              }
+
+              return { success: true, alreadySaved: false };
+            } catch (err) {
+              console.error('Lỗi khi lưu từ vựng lên máy chủ:', err);
+              toast.error(err.message || 'Không thể lưu từ vựng lên máy chủ. Vui lòng thử lại!');
+              return { success: false, error: err };
+            }
+          }
+
+          // GUEST: Lưu cục bộ
+          const res = await get().submitScore(xp, { wordsLearned: 1, silent: true });
+          if (res?.success) {
+            set((s) => ({
+              savedWords: [...s.savedWords, word],
+            }));
+            toast.success(`📖 Đã ghi nhớ: "${word}"! (+${xp} XP)`);
+            return { success: true, alreadySaved: false };
+          } else {
+            return { success: false, error: res?.error };
+          }
+        } finally {
+          inProgressWords.delete(word);
+        }
+      },
+
+      // ─── 4. GỬI TIN NHẮN CHATJOY (JOYBUBBLE) ────────────────────────
+      sendChatMessage: async (message, customKey = null) => {
+        const text = String(message || '').trim();
+        if (text.length < 3) return { success: false };
+
+        const authState = useAuthStore.getState();
+        const isAuthenticated = authState.isAuthenticated;
+
+        if (isAuthenticated) {
+          try {
+            const idempotencyKey =
+              customKey ||
+              (typeof crypto !== 'undefined' && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `chat_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+
+            const res = await progressApi.executeAction({
+              action: 'CHAT_MESSAGE',
+              message: text,
+              idempotencyKey,
+            });
+
+            const payload = res?.data || res;
+            if (payload?.profile) {
+              get().applyServerProfile(payload.profile);
+            }
+
+            const reward = payload?.reward || {};
+            if (reward.missionBonus?.completed?.length) {
+              reward.missionBonus.completed.forEach((title) => {
+                toast.success(`🎖️ Hoàn thành nhiệm vụ: "${title}"! (+${reward.missionBonus.xp} XP)`, { duration: 3500 });
+              });
+            }
+
+            return { success: true };
+          } catch (err) {
+            if (err?.statusCode === 429 || err?.response?.status === 429) {
+              // Cooldown êm đẹp, không gây lỗi UI
+              return { success: false, cooldown: true };
+            }
+            console.warn('Lỗi gửi chat message lên server:', err);
+            return { success: false, error: err };
+          }
+        }
+
+        // GUEST: Cập nhật nhiệm vụ chat cục bộ
+        return get().submitScore(0, { isChat: true, silent: true });
+      },
+
+      // ─── 5. MUA & QUẢN LÝ VẬT PHẨM KHO ĐỒ ──────────────────────────
+      buyItem: async (item, customKey = null) => {
+        const itemId = String(item.id || item);
+        const state = get();
+
+        if (state.ownedItemIds.some((id) => String(id) === itemId)) {
+          toast('Bạn đã sở hữu vật phẩm này rồi!');
+          return false;
+        }
+
+        const authState = useAuthStore.getState();
+        const isAuthenticated = authState.isAuthenticated;
+
+        if (isAuthenticated) {
+          try {
+            const idempotencyKey =
+              customKey ||
+              (typeof crypto !== 'undefined' && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `buy_${itemId}_${Date.now()}`);
+
+            const res = await progressApi.executeAction({
+              action: 'BUY_ITEM',
+              itemId,
+              idempotencyKey,
+            });
+
+            const payload = res?.data || res;
+            if (payload?.profile) {
+              get().applyServerProfile(payload.profile);
+            }
+
+            toast.success(`🛒 Đã mua thành công ${item.name || 'vật phẩm'}!`);
+            return true;
+          } catch (err) {
+            console.error('Lỗi khi mua vật phẩm:', err);
+            toast.error(err.message || 'Không đủ vàng để mua vật phẩm này!');
+            return false;
+          }
+        }
+
+        // GUEST: Kiểm tra và trừ vàng cục bộ
+        if (state.gold < item.price) {
+          toast.error('Không đủ vàng để mua vật phẩm này!');
+          return false;
+        }
+
+        set({
+          gold: Math.max(0, state.gold - item.price),
+          ownedItemIds: [...state.ownedItemIds, item.id],
+        });
+
+        toast.success(`🛒 Đã mua thành công ${item.name}!`);
+        return true;
+      },
+
+      toggleEquip: (id) => {
+        set((state) => {
+          if (!state.ownedItemIds.some((itemKey) => String(itemKey) === String(id))) {
+            toast.error('Bạn cần mua vật phẩm này trước khi trang bị!');
+            return state;
+          }
+          const isEquipped = state.equippedIds.some((itemKey) => String(itemKey) === String(id));
+          const newEquipped = isEquipped
+            ? state.equippedIds.filter((itemKey) => String(itemKey) !== String(id))
+            : [...state.equippedIds, id];
+
+          return { equippedIds: newEquipped };
+        });
+      },
+
+      // Chọn Quest trên bản đồ
+      setActiveQuestIndex: (index) => {
+        set({ activeQuestIndex: index });
+      },
+
+      // ─── 6. TÍCH LŨY XP & ĐỒNG BỘ CỤC BỘ (GUEST PIPELINE) ─────────
+      // Sử dụng hàng đợi pendingScorePromise để tuần tự hóa triệt để mọi giao dịch cho Guest
       submitScore: (earnedXp = 0, options = {}) => {
         const executeTransaction = async () => {
           get().checkDailyReset();
           const authState = useAuthStore.getState();
           const isAuthenticated = authState.isAuthenticated;
-          const currentLevel = get().level;
-          const safeXp = Math.max(0, Math.min(earnedXp, 500)); // Client-side anti-cheat clamp
 
-          // Bước 1: Tính toán chuyển đổi trạng thái nhiệm vụ (Pure State Transition)
+          // Nếu user đã authenticate mà gọi submitScore (legacy):
+          // Điều hướng an toàn sang các action tương ứng để tránh client tự phong thưởng
+          if (isAuthenticated) {
+            if (options.isQuiz) {
+              return get().completeQuiz(options.score ?? 100);
+            }
+            if (options.isChat) {
+              return get().sendChatMessage('Chat message');
+            }
+            // Không tự ý cộng điểm persistent cục bộ cho authenticated user
+            return { success: true, xp: get().xp, level: get().level };
+          }
+
+          // CHẾ ĐỘ KHÁCH (GUEST):
+          const currentLevel = get().level;
+          const safeXp = Math.max(0, Math.min(earnedXp, 500)); // Client clamp
+
           let missionBonusXp = 0;
           const newlyCompletedMissions = [];
           const currentMissions = get().missions || [];
@@ -170,66 +645,10 @@ export const useProgressStore = create(
           const goldToAward = Math.floor(safeXp / 2) + Math.floor(missionBonusXp / 2);
           const wordsToAward = options.wordsLearned || 0;
 
-          // Bước 2A: Người dùng đã đăng nhập (Persist xuống PostgreSQL trước khi commit state)
-          if (isAuthenticated) {
-            if (totalXpToAward > 0 || options.isQuiz || options.phaseId) {
-              try {
-                // Gửi toàn bộ XP kiếm được (hành động + nhiệm vụ) trong 1 request nguyên tử duy nhất
-                const res = await axiosClient.post('/progress/submit-score', {
-                  earnedXp: Math.min(totalXpToAward, 500),
-                  score: options.score ?? 100,
-                  phaseId: options.phaseId ?? null,
-                  timeSpent: options.timeSpent ?? 0,
-                });
-
-                const resPayload = res?.data || res;
-                const serverData = resPayload?.data || resPayload;
-                const serverTotalXp = serverData?.totalXp ?? (get().xp + totalXpToAward);
-                const serverLevel = serverData?.currentLevel ?? calculateLevelInfo(serverTotalXp).level;
-                const serverStreak = serverData?.streakDays ?? get().streak;
-
-                // Commit vào cache Zustand khi Server đã xác nhận thành công
-                set((state) => ({
-                  missions: updatedMissions,
-                  xp: serverTotalXp,
-                  level: serverLevel,
-                  streak: serverStreak,
-                  gold: state.gold + goldToAward,
-                  wordsLearned: state.wordsLearned + wordsToAward,
-                  hasUnsyncedGuestProgress: false,
-                }));
-
-                // Thông báo thành tích
-                newlyCompletedMissions.forEach((m) => {
-                  toast.success(`🎖️ Hoàn thành nhiệm vụ: "${m.title}"! (+${m.xp} XP)`, { duration: 3500 });
-                });
-
-                if (serverData?.levelUp || serverLevel > currentLevel) {
-                  toast.success(`🎉 LÊN CẤP ${serverLevel}!`);
-                } else if (safeXp > 0 && !options.silent) {
-                  toast.success(`+${safeXp} XP`);
-                }
-
-                return { success: true, xp: serverTotalXp, level: serverLevel };
-              } catch (err) {
-                // API thất bại: Không tạo XP/Gold ảo trong local store mà server chưa xác nhận
-                console.error('Lỗi khi lưu tiến trình lên máy chủ:', err);
-                toast.error('Không thể kết nối đến máy chủ để lưu tiến trình. Vui lòng thử lại!');
-                return { success: false, error: err };
-              }
-            } else {
-              // Không có XP và không có quiz/phase: chỉ cập nhật tiến độ nhiệm vụ cục bộ (ví dụ chat 1/5)
-              set({ missions: updatedMissions });
-              return { success: true, xp: get().xp, level: get().level };
-            }
-          }
-
-          // Bước 2B: Chế độ Khách (Guest) — Một giao dịch set() nguyên tử đơn nhất
           let newLevel;
           set((state) => {
             const newXp = state.xp + totalXpToAward;
-            const levelInfo = calculateLevelInfo(newXp);
-            newLevel = levelInfo.level;
+            newLevel = calculateLevelInfo(newXp).level;
             return {
               missions: updatedMissions,
               xp: newXp,
@@ -240,7 +659,6 @@ export const useProgressStore = create(
             };
           });
 
-          // Thông báo thành tích cho khách
           newlyCompletedMissions.forEach((m) => {
             toast.success(`🎖️ Hoàn thành nhiệm vụ: "${m.title}"! (+${m.xp} XP)`, { duration: 3500 });
           });
@@ -259,157 +677,21 @@ export const useProgressStore = create(
         return chainedPromise;
       },
 
-      // ─── 2. CẬP NHẬT TIẾN ĐỘ NHIỆM VỤ HÀNG NGÀY ────────────────────
-      // Single-owner delegation: Điều hướng qua submitScore để tránh phân mảnh logic
+      // ─── 7. CẬP NHẬT TIẾN ĐỘ NHIỆM VỤ (GUEST CONVENIENCE) ───────────
       incrementMission: async (type, amount = 1) => {
         if (type === 'words') return await get().submitScore(0, { wordsLearned: amount, silent: true });
         if (type === 'quiz') return await get().submitScore(0, { isQuiz: true, silent: true });
-        if (type === 'chat') return await get().submitScore(0, { isChat: true, silent: true });
+        if (type === 'chat') return await get().sendChatMessage('Hello Joy');
         return { success: false };
       },
 
-      // ─── 3. HOÀN THÀNH BÀI HỌC TRONG LỘ TRÌNH ──────────────────────
-      completeUnitLesson: async (questId, unitId) => {
-        const unitKey = `${questId}-${unitId}`;
-        if (inProgressUnits.has(unitKey)) {
-          return { success: false, inProgress: true };
-        }
-
-        const state = get();
-        const units = state.questUnits[questId] || [];
-        const currentUnit = units.find((u) => u.id === unitId);
-
-        if (!currentUnit || currentUnit.status === "done") {
-          toast('Bài học này bạn đã hoàn thành trước đó!');
-          return { success: false, alreadyDone: true };
-        }
-
-        inProgressUnits.add(unitKey);
-        try {
-          // Chuẩn bị trạng thái cập nhật tiếp theo của Unit & Quest
-          const updatedUnits = units.map((u) => {
-            if (u.id === unitId) return { ...u, status: "done" };
-            if (u.id === unitId + 1 && u.status === "locked") return { ...u, status: "active" };
-            return u;
-          });
-
-          const doneCount = updatedUnits.filter((u) => u.status === "done").length;
-          const allDone = doneCount >= updatedUnits.length;
-
-          const updatedQuests = state.quests.map((q) => {
-            if (q.id === questId) {
-              return {
-                ...q,
-                done: doneCount,
-                status: allDone ? "complete" : "active",
-              };
-            }
-            if (allDone && q.id === questId + 1 && q.status === "locked") {
-              return { ...q, status: "active" };
-            }
-            return q;
-          });
-
-          const earnedWords = 15;
-          const earnedXp = 60;
-
-          // Nộp điểm vào hệ thống qua submitScore trước
-          const res = await get().submitScore(earnedXp, { wordsLearned: earnedWords, silent: true });
-
-          if (res?.success) {
-            set({
-              questUnits: {
-                ...get().questUnits,
-                [questId]: updatedUnits,
-              },
-              quests: updatedQuests,
-            });
-            toast.success(`⚔️ Vượt qua Unit ${unitId}! (+${earnedXp} XP, +${earnedWords} từ mới)`);
-            return { success: true };
-          } else {
-            // Không khóa ải nếu submitScore thất bại (cho phép thử lại khi mạng ổn định)
-            return { success: false, error: res?.error };
-          }
-        } finally {
-          inProgressUnits.delete(unitKey);
-        }
-      },
-
-      // ─── 4. LƯU TỪ VỰNG TỪ ĐIỂN (CHUẨN HÓA & CHỐNG TRÙNG) ───────────
-      saveWord: async (rawWord, xp = 15) => {
-        const word = String(rawWord || '').toLowerCase().trim();
-        if (!word) return { success: false };
-
-        if (get().savedWords.includes(word) || inProgressWords.has(word)) {
-          toast('Từ vựng này bạn đã lưu trước đó!');
-          return { success: false, alreadySaved: true };
-        }
-
-        inProgressWords.add(word);
-        try {
-          const res = await get().submitScore(xp, { wordsLearned: 1, silent: true });
-          if (res?.success) {
-            set((s) => ({
-              savedWords: [...s.savedWords, word],
-            }));
-            toast.success(`📖 Đã ghi nhớ: "${word}"! (+${xp} XP)`);
-            return { success: true, alreadySaved: false };
-          } else {
-            return { success: false, error: res?.error };
-          }
-        } finally {
-          inProgressWords.delete(word);
-        }
-      },
-
-      // ─── 5. MUA & QUẢN LÝ VẬT PHẨM KHO ĐỒ ──────────────────────────
-      buyItem: (item) => {
-        const state = get();
-        if (state.gold < item.price) {
-          toast.error('Không đủ vàng để mua vật phẩm này!');
-          return false;
-        }
-        if (state.ownedItemIds.includes(item.id)) {
-          toast('Bạn đã sở hữu vật phẩm này rồi!');
-          return false;
-        }
-
-        set({
-          gold: Math.max(0, state.gold - item.price),
-          ownedItemIds: [...state.ownedItemIds, item.id],
-        });
-
-        toast.success(`🛒 Đã mua thành công ${item.name}!`);
-        return true;
-      },
-
-      toggleEquip: (id) => {
-        set((state) => {
-          if (!state.ownedItemIds.includes(id)) {
-            toast.error('Bạn cần mua vật phẩm này trước khi trang bị!');
-            return state;
-          }
-          const isEquipped = state.equippedIds.includes(id);
-          const newEquipped = isEquipped
-            ? state.equippedIds.filter((itemKey) => itemKey !== id)
-            : [...state.equippedIds, id];
-
-          return { equippedIds: newEquipped };
-        });
-      },
-
-      // Chọn Quest trên bản đồ
-      setActiveQuestIndex: (index) => {
-        set({ activeQuestIndex: index });
-      },
-
-      // ─── 6. ĐỒNG BỘ DỮ LIỆU KHÁCH LÊN TÀI KHOẢN MỚI ───────────────
+      // ─── 8. ĐỒNG BỘ DỮ LIỆU KHÁCH LÊN TÀI KHOẢN MỚI ───────────────
+      // (Được bảo lưu cho Phase 2C - Guest Migration)
       syncGuestData: async () => {
         const authState = useAuthStore.getState();
         if (!authState.isAuthenticated) return;
 
         const state = get();
-        // Chỉ sync khi thực sự có điểm tích lũy chưa sync từ phiên khách
         if (!state.hasUnsyncedGuestProgress || state.xp <= 0) return;
 
         set({ isSyncing: true });
@@ -439,33 +721,34 @@ export const useProgressStore = create(
         }
       },
 
-      // Tải tiến trình từ DB về store cho user đã đăng nhập
+      // ─── 9. NẠP TIẾN TRÌNH TỪ DB CHO USER ĐÃ ĐĂNG NHẬP ─────────────
       fetchUserProgress: async () => {
         const authState = useAuthStore.getState();
         if (!authState.isAuthenticated) return;
 
-        try {
-          const res = await axiosClient.get('/progress/stats');
-          const stats = res?.data || res;
-          if (stats) {
-            const totalXp = parseInt(stats.total_xp ?? stats.totalXp, 10) || 0;
-            const currentLevel = parseInt(stats.current_level ?? stats.currentLevel, 10) || calculateLevelInfo(totalXp).level;
-            const streakDays = parseInt(stats.streak_days ?? stats.streakDays, 10) || 0;
+        // 1. Ranh giới Authentication: Bắt snapshot Guest TRƯỚC KHI hydrate Server Profile
+        get().capturePendingGuestMigration();
 
-            set({
-              xp: totalXp,
-              level: currentLevel,
-              streak: streakDays,
-              hasUnsyncedGuestProgress: false, // Reset cờ sau khi nạp từ DB
-            });
+        // 2. Fetch authoritative profile từ PostgreSQL
+        try {
+          const res = await progressApi.getProfile();
+          const raw = res?.data || res;
+          const profile = raw?.profile || raw?.data || raw;
+          if (profile) {
+            get().applyServerProfile(profile);
           }
         } catch (err) {
-          console.warn('Không thể lấy stats tiến trình từ DB:', err);
+          console.warn('Không thể nạp profile tiến trình từ DB:', err);
         }
       },
 
-      // Reset toàn bộ tiến trình về 0 (đăng xuất hoặc làm mới)
-      resetProgress: () => {
+      // ─── 10. RESET TIẾN TRÌNH VỀ BASELINE ───────────────────────────
+      resetProgress: (options = {}) => {
+        const current = get();
+        // Bảo lưu snapshot migration nếu chưa được Phase 2C xử lý, trừ khi ép buộc xóa
+        const preservedSnapshot = options?.forceClearGuestSnapshot ? null : current.pendingGuestMigration;
+        const preservedHasUnsynced = options?.forceClearGuestSnapshot ? false : (current.hasUnsyncedGuestProgress && Boolean(preservedSnapshot));
+
         set({
           xp: 0,
           level: 1,
@@ -473,7 +756,8 @@ export const useProgressStore = create(
           gold: 0,
           wordsLearned: 0,
           isSyncing: false,
-          hasUnsyncedGuestProgress: false,
+          hasUnsyncedGuestProgress: preservedHasUnsynced,
+          pendingGuestMigration: preservedSnapshot,
           lastResetDate: new Date().toISOString().slice(0, 10),
           missions: INITIAL_MISSIONS,
           quests: INITIAL_QUESTS,
@@ -517,6 +801,7 @@ export const useProgressStore = create(
         gold: state.gold,
         wordsLearned: state.wordsLearned,
         hasUnsyncedGuestProgress: state.hasUnsyncedGuestProgress,
+        pendingGuestMigration: state.pendingGuestMigration,
         lastResetDate: state.lastResetDate,
         missions: state.missions,
         quests: state.quests,

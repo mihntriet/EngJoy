@@ -60,8 +60,8 @@ function MainApp() {
   // Derive persistent items from store
   const items = INITIAL_ITEMS.map((item) => ({
     ...item,
-    owned: (ownedItemIds || []).includes(item.id),
-    equipped: (equippedIds || []).includes(item.id),
+    owned: (ownedItemIds || []).some((id) => String(id) === String(item.id)),
+    equipped: (equippedIds || []).some((id) => String(id) === String(item.id)),
   }));
 
   // Derived user stats from Dual-State progressStore
