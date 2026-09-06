@@ -14,6 +14,7 @@ router.get('/phase/:phaseId', ctrl.getByPhase.bind(ctrl));
 router.post('/', ctrl.startPhase.bind(ctrl));
 router.post('/action', progressCtrl.handleAction.bind(progressCtrl));
 router.post('/submit-score', progressCtrl.submitScore.bind(progressCtrl));
+router.post('/migrate-guest', progressCtrl.migrateGuest.bind(progressCtrl));
 router.put('/:id/lesson', ctrl.updateLesson.bind(ctrl));
 router.put('/:id/complete', ctrl.complete.bind(ctrl));
 router.delete('/:id', ctrl.delete.bind(ctrl));

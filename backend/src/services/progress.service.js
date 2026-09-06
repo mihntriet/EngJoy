@@ -9,6 +9,8 @@ const {
   ACTION_REWARDS,
 } = require('../constants/gameCatalog');
 
+const { validateGuestSnapshot, GUEST_PLAYABLE_QUESTS } = require('./guestMigrationValidator');
+
 const LEVEL_ORDER = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 const PASS_THRESHOLD = 60; // minimum score to pass a phase
 
@@ -25,6 +27,292 @@ function toDateStr(d) {
 }
 
 class ProgressService {
+  /**
+   * Pure, deterministic Guest snapshot validation and reconstruction (Phase 2C.1).
+   *
+   * @param {object} snapshot
+   * @returns {object} Validated migration payload
+   */
+  validateGuestSnapshot(snapshot) {
+    return validateGuestSnapshot(snapshot);
+  }
+
+  /**
+   * Guest Migration Transaction & Merge Service (Phase 2C.2)
+   *
+   * Atomically merges a validated Guest progression snapshot into an authenticated
+   * user's player_profiles row. Enforces single-migration invariant, idempotency,
+   * row locking, deduplication, and zero mission reward replay.
+   *
+   * @param {string} userId - Authenticated user UUID
+   * @param {object} snapshot - Raw or already validated guest snapshot
+   * @returns {Promise<object>} Authoritative migration response
+   */
+  async migrateGuestProgress(userId, snapshot) {
+    if (!userId) {
+      const err = new Error('userId is required for guest migration');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // 1. Authority Boundary: Validate snapshot through pure deterministic validator
+    // Ensures NO raw/unvalidated snapshot can ever mutate the database
+    const validated =
+      snapshot && snapshot.reconstruction && snapshot.migrationKey
+        ? snapshot
+        : validateGuestSnapshot(snapshot);
+
+    const migrationKey = validated.migrationKey;
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      // 2. Idempotency Check in idempotency_keys table
+      const { rows: existingKeyRows } = await client.query(
+        `SELECT * FROM idempotency_keys WHERE user_id = $1 AND key = $2 FOR UPDATE`,
+        [userId, migrationKey]
+      );
+
+      if (existingKeyRows.length > 0) {
+        const record = existingKeyRows[0];
+        if (record.action_type !== 'MIGRATE_GUEST') {
+          const err = new Error('Idempotency key already used for a different action');
+          err.statusCode = 409;
+          throw err;
+        }
+        // Same user + same key already committed: return stored response idempotently
+        await client.query('COMMIT');
+        return record.response;
+      }
+
+      // 3. Ensure baseline profile exists then lock row FOR UPDATE
+      await client.query(
+        `INSERT INTO player_profiles (
+           user_id,
+           total_xp,
+           current_level,
+           gold,
+           streak_days,
+           words_learned,
+           saved_words,
+           quest_units,
+           owned_item_ids,
+           equipped_ids,
+           guest_migrated
+         )
+         VALUES ($1, 0, 1, 0, 0, 0, '{}', '{}', '{}', '{}', FALSE)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [userId]
+      );
+
+      const { rows: profileRows } = await client.query(
+        `SELECT * FROM player_profiles WHERE user_id = $1 FOR UPDATE`,
+        [userId]
+      );
+
+      const profile = profileRows[0];
+
+
+      // 4. Single-Migration Invariant Check
+      if (profile.guest_migrated) {
+        if (profile.migration_key === migrationKey) {
+          // Idempotent retry: profile already committed under this key
+          const formatted = this._formatProfile(profile);
+          const responsePayload = {
+            success: true,
+            migrated: true,
+            alreadyMigrated: true,
+            profile: formatted,
+          };
+          await client.query('COMMIT');
+          return responsePayload;
+        } else {
+          // Conflict: Account already migrated under a DIFFERENT migration key
+          const err = new Error('Tài khoản đã hoàn tất chuyển giao tiến trình trước đó');
+          err.statusCode = 409;
+          throw err;
+        }
+      }
+
+      // 5. Merge Semantics
+      // A. XP & Level:
+      const currentXP = parseInt(profile.total_xp, 10) || 0;
+      const finalXP = currentXP + (validated.xp || 0);
+      const { level: finalLevel } = calculateLevel(finalXP);
+
+      // B. Gold:
+      const currentGold = parseInt(profile.gold, 10) || 0;
+      const finalGold = currentGold + (validated.gold || 0);
+
+      // C. Streak:
+      const currentStreak = parseInt(profile.streak_days, 10) || 0;
+      const finalStreak = Math.max(currentStreak, validated.streak || 0);
+
+      // D. Words Learned:
+      const currentWords = parseInt(profile.words_learned, 10) || 0;
+      const finalWordsLearned = currentWords + (validated.wordsLearned || 0);
+
+      // E. Saved Words: Deduplicated union
+      const existingSavedWords = Array.isArray(profile.saved_words) ? profile.saved_words : [];
+      const incomingSavedWords = Array.isArray(validated.savedWords) ? validated.savedWords : [];
+      const finalSavedWords = Array.from(new Set([...existingSavedWords, ...incomingSavedWords]));
+
+      // F. Quest Units: Merge by quest/unit identity while preserving valid progression
+      const serverQuestUnits =
+        profile.quest_units && typeof profile.quest_units === 'object'
+          ? profile.quest_units
+          : {};
+      const incomingQuestUnits =
+        validated.questUnits && typeof validated.questUnits === 'object'
+          ? validated.questUnits
+          : {};
+
+      const finalQuestUnits = { ...serverQuestUnits };
+
+      for (const qId of GUEST_PLAYABLE_QUESTS) {
+        const qKey = String(qId);
+        const maxUnits = QUEST_CURRICULUM[qId]?.maxUnits || 8;
+        const sUnits = Array.isArray(serverQuestUnits[qKey]) ? serverQuestUnits[qKey] : [];
+        const gUnits = Array.isArray(incomingQuestUnits[qKey]) ? incomingQuestUnits[qKey] : [];
+
+        // Count contiguous completed units
+        // A unit done on server stays done. A validated guest done unit adds to done.
+        let doneCount = 0;
+        for (let uId = 1; uId <= maxUnits; uId++) {
+          const sU = sUnits.find((u) => u && u.id === uId);
+          const gU = gUnits.find((u) => u && u.id === uId);
+          const isDone = (sU && sU.status === 'done') || (gU && gU.status === 'done');
+          if (isDone) {
+            doneCount++;
+          } else {
+            break; // Stop at first non-done unit to maintain contiguous sequence
+          }
+        }
+
+        const mergedList = [];
+        for (let uId = 1; uId <= maxUnits; uId++) {
+          let status = 'locked';
+          if (uId <= doneCount) {
+            status = 'done';
+          } else if (uId === doneCount + 1) {
+            status = 'active';
+          }
+          mergedList.push({ id: uId, status });
+        }
+        finalQuestUnits[qKey] = mergedList;
+      }
+
+      // G. Owned Items: Deduplicated union
+      const existingOwned = Array.isArray(profile.owned_item_ids) ? profile.owned_item_ids : [];
+      const incomingOwned = Array.isArray(validated.ownedItemIds) ? validated.ownedItemIds : [];
+      const finalOwnedItemIds = Array.from(new Set([...existingOwned, ...incomingOwned]));
+
+      // H. Equipped Items:
+      // If server already has equipment, keep server equipment; else apply guest equipment
+      const existingEquipped = Array.isArray(profile.equipped_ids) ? profile.equipped_ids : [];
+      const incomingEquipped = Array.isArray(validated.equippedIds) ? validated.equippedIds : [];
+      let finalEquippedIds = existingEquipped.length > 0 ? existingEquipped : incomingEquipped;
+      // Guarantee equipped items are subset of owned items and max 2
+      finalEquippedIds = finalEquippedIds.filter((id) => finalOwnedItemIds.includes(id)).slice(0, 2);
+
+      // I. Daily Missions: Zero reward replay
+      const today = toDateStr(new Date());
+      const lastReset = toDateStr(profile.last_reset_date);
+      let missions = Array.isArray(profile.missions) ? profile.missions : DEFAULT_MISSIONS;
+
+      if (lastReset !== today) {
+        missions = DEFAULT_MISSIONS.map((m) => ({ ...m, done: 0, done_flag: false }));
+        profile.last_reset_date = today;
+      }
+
+      // Merge progress into today's missions without paying any bonus
+      if (Array.isArray(validated.missions)) {
+        missions = missions.map((serverM) => {
+          const guestM = validated.missions.find((gm) => gm.id === serverM.id);
+          if (guestM) {
+            const mergedDone = Math.min(serverM.total, Math.max(serverM.done || 0, guestM.done || 0));
+            return {
+              ...serverM,
+              done: mergedDone,
+              done_flag: mergedDone >= serverM.total,
+            };
+          }
+          return serverM;
+        });
+      }
+
+      // 6. Update player_profiles
+      const { rows: updatedRows } = await client.query(
+        `UPDATE player_profiles
+         SET total_xp = $2,
+             current_level = $3,
+             gold = $4,
+             streak_days = $5,
+             words_learned = $6,
+             saved_words = $7,
+             missions = $8,
+             quest_units = $9,
+             owned_item_ids = $10,
+             equipped_ids = $11,
+             last_active_date = $12,
+             last_reset_date = $13,
+             guest_migrated = TRUE,
+             migration_key = $14,
+             updated_at = NOW()
+         WHERE user_id = $1
+         RETURNING *`,
+        [
+          userId,
+          finalXP,
+          finalLevel,
+          finalGold,
+          finalStreak,
+          finalWordsLearned,
+          finalSavedWords,
+          JSON.stringify(missions),
+          JSON.stringify(finalQuestUnits),
+          finalOwnedItemIds,
+          finalEquippedIds,
+          profile.last_active_date || today,
+          profile.last_reset_date || today,
+          migrationKey,
+        ]
+      );
+
+      const finalProfile = this._formatProfile(updatedRows[0]);
+      const responsePayload = {
+        success: true,
+        migrated: true,
+        alreadyMigrated: false,
+        appliedRewards: {
+          xpAwarded: validated.xp || 0,
+          goldAwarded: validated.gold || 0,
+          wordsAwarded: validated.wordsLearned || 0,
+          unitsCount: validated.reconstruction?.validUnitCount || 0,
+        },
+        profile: finalProfile,
+      };
+
+      // 7. Persist Idempotency Record
+      await client.query(
+        `INSERT INTO idempotency_keys (user_id, key, action_type, response)
+         VALUES ($1, $2, 'MIGRATE_GUEST', $3)
+         ON CONFLICT (user_id, key) DO UPDATE SET response = EXCLUDED.response`,
+        [userId, migrationKey, JSON.stringify(responsePayload)]
+      );
+
+      await client.query('COMMIT');
+      return responsePayload;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+
   /**
    * Authoritative Progression Engine (Phase 2B.1)
    * Executes game actions, calculates rewards on the server, updates player_profiles

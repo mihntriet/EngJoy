@@ -18,6 +18,9 @@ export default function Login() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (loading) return;
+
     if (!email.trim() || !password.trim()) {
       toast.error('Vui lòng điền đầy đủ email và mật khẩu');
       return;
@@ -25,12 +28,44 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const res = await authApi.login({ email, password });
+      // 1. Ranh giới Guest: Capture snapshot TRƯỚC KHI thực hiện đăng nhập
+      const pendingSnapshot =
+        useProgressStore.getState().capturePendingGuestMigration() ||
+        useProgressStore.getState().pendingGuestMigration;
+
+      // 2. Thực hiện đăng nhập tài khoản qua authApi
+      const res = await authApi.login({
+        email: email.trim(),
+        password,
+      });
+
       if (res?.data) {
         const { user, accessToken, refreshToken } = res.data;
+
+        // 3. Chuyển authStore sang trạng thái authenticated
         setAuth(user, accessToken, refreshToken);
-        await useProgressStore.getState().fetchUserProgress();
-        toast.success(`Chào mừng ${user.displayName || 'bạn'} trở lại!`);
+
+        // 4. Nếu có tiến trình Guest chờ migration, tiến hành migrate ngay (KHÔNG fetchUserProgress trước!)
+        if (pendingSnapshot) {
+          const migrationResult = await useProgressStore.getState().migrateGuestProgress();
+          if (migrationResult?.success) {
+            toast.success(`Chào mừng ${user.displayName || 'bạn'} trở lại! Tiến trình Khách đã được hợp nhất.`);
+          } else if (migrationResult?.conflict) {
+            toast('Tài khoản đã có tiến trình trên máy chủ. Tiến trình Khách được bảo lưu để đối chiếu.', {
+              icon: '⚠️',
+            });
+          } else {
+            toast(`Chào mừng ${user.displayName || 'bạn'} trở lại! Đang giữ tiến trình Khách để đồng bộ sau.`, {
+              icon: 'ℹ️',
+            });
+          }
+        } else {
+          // 5. Nếu không có snapshot Khách, nạp tiến trình người dùng bình thường
+          await useProgressStore.getState().fetchUserProgress();
+          toast.success(`Chào mừng ${user.displayName || 'bạn'} trở lại!`);
+        }
+
+        // 6. Điều hướng sau khi toàn bộ quy trình hydration / migration hoàn tất
         navigate('/');
         return;
       }
