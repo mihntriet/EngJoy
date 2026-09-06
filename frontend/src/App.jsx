@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { INITIAL_USER, INITIAL_ITEMS, MISSIONS } from './constants/gameData';
 import { useAuthStore } from './context/authStore';
@@ -14,6 +14,46 @@ import Inventory from './pages/Inventory';
 import Login from './pages/Login';
 import Register from './pages/Register';
 
+let bootstrapPromise = null;
+
+/**
+ * PHASE 2C.4C — Deterministic App Bootstrap / Reload Guest Migration Recovery
+ * 
+ * Safely recovers progression on startup or browser refresh:
+ * - Unauthenticated: normal Guest startup (zero authenticated API calls)
+ * - Authenticated + pendingGuestMigration: runs migrateGuestProgress() directly (NO fetchUserProgress() first)
+ * - Authenticated + no pendingGuestMigration: runs normal fetchUserProgress()
+ * - Concurrency: deduplicates simultaneous calls (e.g. React 18 StrictMode) via shared bootstrapPromise
+ */
+export async function bootstrapAppProgress() {
+  if (bootstrapPromise) {
+    return bootstrapPromise;
+  }
+
+  const authState = useAuthStore.getState();
+  if (!authState.isAuthenticated || !authState.user) {
+    return { status: 'unauthenticated' };
+  }
+
+  bootstrapPromise = (async () => {
+    try {
+      const progressStore = useProgressStore.getState();
+      if (progressStore.pendingGuestMigration) {
+        // Invariant C4-B10: Strictly migrate directly, DO NOT call fetchUserProgress() first
+        const result = await progressStore.migrateGuestProgress();
+        return { status: 'migrated', result };
+      } else {
+        await progressStore.fetchUserProgress();
+        return { status: 'hydrated' };
+      }
+    } finally {
+      bootstrapPromise = null;
+    }
+  })();
+
+  return bootstrapPromise;
+}
+
 function MainApp() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -27,7 +67,6 @@ function MainApp() {
     missions,
     ownedItemIds,
     equippedIds,
-    fetchUserProgress,
     buyItem,
     toggleEquip,
   } = useProgressStore();
@@ -44,18 +83,28 @@ function MainApp() {
   const [view, setView] = useState(() => getViewFromPath(location.pathname));
   const [mobileOpen, setMobileOpen] = useState(false);
   const [user, setUser] = useState(INITIAL_USER);
+  const bootstrappedAuthRef = useRef(null);
 
   // Sync state with location
   useEffect(() => {
     setView(getViewFromPath(location.pathname));
   }, [location.pathname]);
 
-  // Fetch DB progress on auth
+  // Authenticated Bootstrap & Progression Recovery Flow
   useEffect(() => {
-    if (authUser) {
-      fetchUserProgress();
+    if (!authUser || !isAuthenticated) {
+      bootstrappedAuthRef.current = null;
+      return;
     }
-  }, [authUser, fetchUserProgress]);
+
+    const currentUserId = authUser.id || authUser.email;
+    if (bootstrappedAuthRef.current === currentUserId) {
+      return;
+    }
+    bootstrappedAuthRef.current = currentUserId;
+
+    bootstrapAppProgress();
+  }, [authUser?.id, authUser?.email, isAuthenticated]);
 
   // Derive persistent items from store
   const items = INITIAL_ITEMS.map((item) => ({
