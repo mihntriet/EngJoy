@@ -100,6 +100,8 @@ export const useProgressStore = create(
       isSyncing: false,
       hasUnsyncedGuestProgress: false,
       pendingGuestMigration: null,
+      isMigrating: false,
+      migrationConflict: null,
       lastResetDate: new Date().toISOString().slice(0, 10),
 
       // Lộ trình, Nhiệm vụ, Kho đồ & Từ vựng
@@ -113,10 +115,16 @@ export const useProgressStore = create(
 
       // ─── 0.0 BẮT SNAPSHOT TIẾN TRÌNH KHÁCH CHỜ MIGRATION (PHASE 2C) ──
       // Tách biệt hoàn toàn trách nhiệm giữa Guest Snapshot và Server Hydration.
-      // Được gọi ở ranh giới Authentication TRƯỚC KHI nạp Server Profile.
+      // Chỉ được gọi ở ranh giới Authentication TRƯỚC KHI user được authenticated.
       capturePendingGuestMigration: () => {
+        // C4-1 & C4-5: Tuyệt đối không bao giờ snapshot trạng thái đã authenticated
+        const authState = useAuthStore.getState();
+        if (authState.isAuthenticated) {
+          return null;
+        }
+
         const state = get();
-        // Nếu đã có snapshot được lưu từ trước, TUYỆT ĐỐI không ghi đè
+        // C4-2 & C4-3: Nếu đã có snapshot được lưu từ trước, TUYỆT ĐỐI không ghi đè và không tạo key mới
         if (state.pendingGuestMigration) {
           return state.pendingGuestMigration;
         }
@@ -134,7 +142,14 @@ export const useProgressStore = create(
           return null;
         }
 
+        // C4-2: Tạo migrationKey DUY NHẤT một lần tại thời điểm bắt snapshot
+        const migrationKey =
+          typeof crypto !== 'undefined' && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `mig_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+
         const snapshot = {
+          migrationKey,
           xp: state.xp,
           gold: state.gold,
           streak: state.streak,
@@ -742,12 +757,134 @@ export const useProgressStore = create(
         }
       },
 
+      // ─── 9.1 GUEST MIGRATION ACTION (PHASE 2C.4A) ──────────────────
+      // Chuyển đổi tiến trình Guest đã capture vào tài khoản authenticated
+      migrateGuestProgress: async (options = {}) => {
+        // 1. Kiểm tra trạng thái xác thực
+        const authState = useAuthStore.getState();
+        if (!authState.isAuthenticated) {
+          return { success: false, reason: 'unauthenticated' };
+        }
+
+        // 2 & 3. Đọc DUY NHẤT snapshot pending. TUYỆT ĐỐI không gọi capturePendingGuestMigration() ở đây
+        const state = get();
+        const snapshot = state.pendingGuestMigration;
+        if (!snapshot) {
+          return { success: true, noData: true };
+        }
+
+        // 5. Kiểm tra in-flight guard
+        if (state.isMigrating) {
+          return { success: false, inFlight: true };
+        }
+
+        // 6. Đặt isMigrating = true
+        set({ isMigrating: true });
+
+        // 7. Gửi request migration qua API helper (sử dụng migrationKey đã đóng băng trong snapshot)
+        try {
+          const res = await progressApi.migrateGuest({
+            migrationKey: snapshot.migrationKey,
+            snapshot,
+          });
+
+          // 8. On confirmed HTTP success:
+          const raw = res?.data || res;
+          const profile = raw?.profile || raw?.data?.profile || (raw?.data && raw?.data.migrated ? raw.data.profile : null) || raw;
+          if (profile) {
+            get().applyServerProfile(profile);
+          }
+
+          set({
+            pendingGuestMigration: null,
+            hasUnsyncedGuestProgress: false,
+            migrationConflict: null,
+            isMigrating: false,
+          });
+
+          return {
+            success: true,
+            migrated: true,
+            summary: raw?.summary || raw?.data?.summary,
+          };
+        } catch (err) {
+          // 10. On 409 Conflict:
+          const isConflict =
+            err?.status === 409 ||
+            err?.response?.status === 409 ||
+            err?.code === 'MIGRATION_CONFLICT' ||
+            err?.conflict === true;
+
+          if (isConflict) {
+            // DO NOT clear snapshot, set isMigrating = false
+            set({ isMigrating: false });
+
+            let cloudProfile = null;
+            try {
+              const profRes = await progressApi.getProfile();
+              const rawProf = profRes?.data || profRes;
+              cloudProfile = rawProf?.profile || rawProf?.data?.profile || rawProf?.data || rawProf;
+              if (cloudProfile) {
+                get().applyServerProfile(cloudProfile);
+              }
+            } catch (profErr) {
+              console.warn('Không thể nạp profile cloud sau khi phát hiện migration conflict:', profErr);
+            }
+
+            const conflictData = {
+              message: err?.message || 'Xung đột tiến trình: Tài khoản đã có tiến trình trên máy chủ',
+              code: err?.code || 'MIGRATION_CONFLICT',
+              reason: err?.reason || 'CLOUD_PROGRESS_EXISTS',
+              existingSummary: err?.existingSummary || null,
+              guestSummary: err?.guestSummary || null,
+              cloudProfile,
+              pendingSnapshot: snapshot,
+              detectedAt: Date.now(),
+            };
+
+            // Lưu migrationConflict và bảo toàn nguyên vẹn pendingGuestMigration
+            set({
+              migrationConflict: conflictData,
+            });
+
+            return {
+              success: false,
+              conflict: true,
+              reason: conflictData.reason,
+              conflictData,
+              error: err,
+            };
+          }
+
+          // 9. On 400 / 500 / timeout / network error:
+          // DO NOT clear snapshot, DO NOT clear migrationKey, set isMigrating = false
+          set({ isMigrating: false });
+          return {
+            success: false,
+            retryable: true,
+            error: err,
+            message: err?.message || 'Lỗi mạng hoặc hệ thống khi chuyển đổi tiến trình khách',
+          };
+        }
+      },
+
+      // ─── 9.2 HỦY BỎ SNAPSHOT MIGRATION (EXPLICIT USER ACTION) ───────
+      // Chỉ được gọi bởi hành động chủ đích từ người dùng (destructive local decision)
+      discardPendingGuestMigration: () => {
+        set({
+          pendingGuestMigration: null,
+          hasUnsyncedGuestProgress: false,
+          migrationConflict: null,
+        });
+      },
+
       // ─── 10. RESET TIẾN TRÌNH VỀ BASELINE ───────────────────────────
       resetProgress: (options = {}) => {
         const current = get();
         // Bảo lưu snapshot migration nếu chưa được Phase 2C xử lý, trừ khi ép buộc xóa
         const preservedSnapshot = options?.forceClearGuestSnapshot ? null : current.pendingGuestMigration;
         const preservedHasUnsynced = options?.forceClearGuestSnapshot ? false : (current.hasUnsyncedGuestProgress && Boolean(preservedSnapshot));
+        const preservedConflict = options?.forceClearGuestSnapshot ? null : current.migrationConflict;
 
         set({
           xp: 0,
@@ -756,8 +893,10 @@ export const useProgressStore = create(
           gold: 0,
           wordsLearned: 0,
           isSyncing: false,
+          isMigrating: false,
           hasUnsyncedGuestProgress: preservedHasUnsynced,
           pendingGuestMigration: preservedSnapshot,
+          migrationConflict: preservedConflict,
           lastResetDate: new Date().toISOString().slice(0, 10),
           missions: INITIAL_MISSIONS,
           quests: INITIAL_QUESTS,

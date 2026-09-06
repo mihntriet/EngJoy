@@ -10,6 +10,7 @@ export const userProgressApi = {
   startPhase: (phaseId) => axiosClient.post(ENDPOINTS.PROGRESS.START, { phaseId }),
   updateLesson: (id, data) => axiosClient.put(ENDPOINTS.PROGRESS.UPDATE_LESSON(id), data),
   complete: (id, score) => axiosClient.put(ENDPOINTS.PROGRESS.COMPLETE(id), { score }),
+  migrateGuest: (payload) => axiosClient.post(ENDPOINTS.PROGRESS.MIGRATE_GUEST, payload),
 };
 
 export const progressApi = userProgressApi;

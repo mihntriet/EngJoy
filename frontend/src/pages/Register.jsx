@@ -23,6 +23,8 @@ export default function Register() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    if (loading) return;
+
     if (!displayName.trim() || !email.trim() || !password.trim()) {
       toast.error('Vui lòng điền đầy đủ các thông tin đăng ký');
       return;
@@ -40,6 +42,12 @@ export default function Register() {
 
     setLoading(true);
     try {
+      // 1. Ranh giới Guest: Capture snapshot TRƯỚC KHI thực hiện xác thực
+      const pendingSnapshot =
+        useProgressStore.getState().capturePendingGuestMigration() ||
+        useProgressStore.getState().pendingGuestMigration;
+
+      // 2. Thực hiện đăng ký tài khoản qua authApi
       const res = await authApi.register({
         displayName: displayName.trim(),
         email: email.trim(),
@@ -52,9 +60,31 @@ export default function Register() {
           ...user,
           champion: selectedChamp,
         };
+
+        // 3. Chuyển authStore sang trạng thái authenticated
         setAuth(enhancedUser, accessToken, refreshToken);
-        await useProgressStore.getState().fetchUserProgress();
-        toast.success(`Gia nhập thành công! Chào mừng ${displayName}`);
+
+        // 4. Nếu có tiến trình Guest chờ migration, tiến hành migrate ngay
+        if (pendingSnapshot) {
+          const migrationResult = await useProgressStore.getState().migrateGuestProgress();
+          if (migrationResult?.success) {
+            toast.success(`Gia nhập thành công! Tiến trình Khách đã được lưu vào tài khoản của ${displayName}`);
+          } else if (migrationResult?.conflict) {
+            toast('Tài khoản đã có tiến trình trên máy chủ. Tiến trình Khách được bảo lưu để đối chiếu.', {
+              icon: '⚠️',
+            });
+          } else {
+            toast('Đăng ký thành công. Đang giữ tiến trình Khách để đồng bộ sau.', {
+              icon: 'ℹ️',
+            });
+          }
+        } else {
+          // 5. Nếu không có snapshot Khách, nạp tiến trình người dùng bình thường
+          await useProgressStore.getState().fetchUserProgress();
+          toast.success(`Gia nhập thành công! Chào mừng ${displayName}`);
+        }
+
+        // 6. Điều hướng sau khi toàn bộ quy trình hydration / migration hoàn tất
         navigate('/');
         return;
       }
