@@ -1,0 +1,237 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  /* Surface colors (Dark Fantasy / Deep Navy RPG) */
+  --bg: #0a0d14;
+  --bg-surface: #101522;
+  --bg-card: #151b2c;
+  --bg-card-hover: #1b2338;
+  --bg-elevated: #202a44;
+  --s1: #101522;
+  --s2: #151b2c;
+  --s3: #1e263d;
+
+  /* Borders */
+  --bd: rgba(255, 255, 255, 0.08);
+  --bd-subtle: rgba(255, 255, 255, 0.05);
+  --bd2: rgba(255, 255, 255, 0.15);
+  --bd-hover: rgba(139, 92, 246, 0.4);
+  --bd-gold: rgba(245, 158, 11, 0.35);
+
+  /* Typography */
+  --t1: #f8fafc;
+  --t2: #94a3b8;
+  --t3: #64748b;
+
+  /* Accent Colors (COLOR = MEANING) */
+  --purple: #8b5cf6;
+  --purple-light: #a78bfa;
+  --purple-d: rgba(139, 92, 246, 0.15);
+  --purple-glow: 0 0 24px rgba(139, 92, 246, 0.25);
+
+  --indigo: #6366f1;
+  --indigo-d: rgba(99, 102, 241, 0.15);
+
+  /* XP / Mastery */
+  --gold: #f59e0b;
+  --gold-light: #fbbf24;
+  --gold-d: rgba(245, 158, 11, 0.15);
+  --gold-g: rgba(245, 158, 11, 0.35);
+  --gold-glow: 0 0 20px rgba(245, 158, 11, 0.25);
+
+  /* Streak / Danger / HP */
+  --red: #ef4444;
+  --red-d: rgba(239, 68, 68, 0.15);
+
+  /* Success / Unlocked */
+  --green: #10b981;
+  --green-d: rgba(16, 185, 129, 0.15);
+  --green-glow: 0 0 20px rgba(16, 185, 129, 0.25);
+
+  /* Radii */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+
+  /* Shadows */
+  --sh-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --sh: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --sh-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+  --sh-glow: 0 0 30px rgba(99, 102, 241, 0.2);
+}
+
+@theme {
+  --color-dark-base: #0a0d14;
+  --color-dark-sidebar: #090c12;
+  --color-dark-card: #151b2c;
+  --color-dark-card-hover: #1b2338;
+  --color-dark-surface: #1e263d;
+  --color-dark-border: rgba(255, 255, 255, 0.08);
+  --color-neon-purple: #8b5cf6;
+  --color-neon-green: #10b981;
+  --color-neon-orange: #f59e0b;
+  --color-text-primary: #f8fafc;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+  --font-family-sans: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-family-mono: 'JetBrains Mono', monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--t1);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Micro-interactions & animations */
+@keyframes dot-pop {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+.rpg-btn-primary {
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 16px rgba(79, 70, 229, 0.35);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.rpg-btn-primary:hover {
+  background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
+  box-shadow: 0 6px 22px rgba(99, 102, 241, 0.5);
+  transform: translateY(-1px);
+}
+.rpg-btn-primary:active {
+  transform: translateY(0);
+}
+
+.rpg-card {
+  background: var(--bg-card);
+  border: 1px solid var(--bd);
+  border-radius: var(--r-lg);
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+.rpg-card:hover {
+  border-color: var(--bd2);
+}
+
+.rpg-card-interactive:hover {
+  border-color: var(--bd-hover);
+  box-shadow: 0 8px 30px rgba(99, 102, 241, 0.12);
+  transform: translateY(-2px);
+}
+
+/* Responsive utilities */
+.mobile-only {
+  display: none !important;
+}
+
+@media (max-width: 1024px) {
+  .desktop-only {
+    display: none !important;
+  }
+  .dashboard-main-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .mobile-only {
+    display: flex !important;
+  }
+  .mobile-hide {
+    display: none !important;
+  }
+  .sidebar-container {
+    position: fixed !important;
+    left: -260px;
+    z-index: 999;
+    transition: left 0.3s ease;
+  }
+  .sidebar-container.open {
+    left: 0 !important;
+  }
+  .dashboard-scroll-container {
+    padding: 16px 14px 28px !important;
+  }
+  .quest-card-hero {
+    min-height: auto !important;
+  }
+  .quest-card-content {
+    max-width: 100% !important;
+    padding: 18px 16px !important;
+  }
+  .quest-card-hero-bg {
+    width: 100% !important;
+    opacity: 0.18 !important;
+  }
+}
+
+/* Custom sleek scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}

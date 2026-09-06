@@ -1,0 +1,43 @@
+services:
+  # 1. PostgreSQL (Quản lý User & Progress)
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: el_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: Lio56
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: engjoy_app_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 2. MongoDB (Lưu trữ Từ điển)
+  mongo-db:
+    image: mongo:6.0
+    container_name: el_mongodb
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: Lio
+      MONGO_INITDB_ROOT_PASSWORD: 123456
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  # 3. Redis (Caching)
+  redis-cache:
+    image: redis:7-alpine
+    container_name: el_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+# Khai báo volumes để dữ liệu không bị mất khi tắt Docker
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:
