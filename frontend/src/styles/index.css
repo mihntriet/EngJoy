@@ -27,6 +27,10 @@
   /* Accent Colors (COLOR = MEANING) */
   --purple: #8b5cf6;
   --purple-light: #a78bfa;
+  /* Compatibility tokens used by the routed NotFound page. */
+  --color-primary: #8b5cf6;
+  --color-primary-light: #a78bfa;
+  --color-text-secondary: #94a3b8;
   --purple-d: rgba(139, 92, 246, 0.15);
   --purple-glow: 0 0 24px rgba(139, 92, 246, 0.25);
 
@@ -91,7 +95,6 @@
 html, body, #root {
   height: 100%;
   width: 100%;
-  overflow: hidden;
 }
 
 body {
@@ -101,6 +104,16 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow: auto;
+}
+
+button, input, a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 3px solid var(--purple-light);
+  outline-offset: 3px;
 }
 
 /* Micro-interactions & animations */
@@ -234,4 +247,13 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

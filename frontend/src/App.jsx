@@ -14,6 +14,7 @@ import Arena from './pages/Arena';
 import Inventory from './pages/Inventory';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import NotFound from './pages/NotFound';
 
 let bootstrapPromise = null;
 
@@ -78,7 +79,8 @@ function MainApp() {
     if (pathname === '/codex') return 'codex';
     if (pathname === '/arena') return 'arena';
     if (pathname === '/inventory') return 'inventory';
-    return 'home';
+    if (pathname === '/') return 'home';
+    return null;
   };
 
   const [view, setView] = useState(() => getViewFromPath(location.pathname));
@@ -227,11 +229,12 @@ function MainApp() {
               onBuyItem={handleBuyItem}
             />
           )}
+          {view === null && <NotFound />}
         </div>
       </main>
 
       {/* 3. AI Coach Companion */}
-      <JoyBubble />
+      {view !== null && <JoyBubble />}
     </div>
   );
 }
