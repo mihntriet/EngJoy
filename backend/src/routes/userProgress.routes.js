@@ -13,6 +13,8 @@ router.get('/stats', progressCtrl.getStats.bind(progressCtrl));
 router.get('/phase/:phaseId', ctrl.getByPhase.bind(ctrl));
 router.post('/', ctrl.startPhase.bind(ctrl));
 router.post('/action', progressCtrl.handleAction.bind(progressCtrl));
+router.post('/lesson/start', progressCtrl.startLesson.bind(progressCtrl));
+router.post('/lesson/submit', progressCtrl.submitLesson.bind(progressCtrl));
 router.post('/submit-score', progressCtrl.submitScore.bind(progressCtrl));
 router.post('/migrate-guest', progressCtrl.migrateGuest.bind(progressCtrl));
 router.put('/:id/lesson', ctrl.updateLesson.bind(ctrl));

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { splash, LOL_ICONS } from '../constants/gameData';
 import { useProgressStore } from '../context/progressStore';
+import { useAuthStore } from '../context/authStore';
 import ChampPortrait from '../components/common/ChampPortrait';
 import ChampIcon from '../components/common/ChampIcon';
 import Chip from '../components/common/Chip';
@@ -14,9 +15,13 @@ export default function Learning() {
     quests,
     questUnits,
     completeUnitLesson,
+    startLessonAttempt,
+    submitLessonAttempt,
     activeQuestIndex,
     setActiveQuestIndex,
   } = useProgressStore();
+
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
 
   const [open, setOpen] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -65,6 +70,9 @@ export default function Learning() {
         unit={activeLesson}
         onClose={handleLessonClose}
         onComplete={handleLessonComplete}
+        onStartAttempt={startLessonAttempt}
+        onSubmitAttempt={submitLessonAttempt}
+        isAuthenticated={isAuthenticated}
       />
 
       {/* Level sidebar */}

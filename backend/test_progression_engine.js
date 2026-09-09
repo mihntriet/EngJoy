@@ -52,16 +52,37 @@ async function runSuite() {
   // -------------------------------------------------------------
   console.log('\n▶ Test A: COMPLETE_UNIT');
 
-  // A1: First completion rewards correctly
-  const unitRes1 = await progressService.executeAction(userId, {
-    action: 'COMPLETE_UNIT',
-    questId: 1,
-    unitId: 1,
+  // A0: Direct COMPLETE_UNIT without attempt is rejected (Anti-bypass Phase 4A.4)
+  let directBypassBlocked = false;
+  try {
+    await progressService.executeAction(userId, {
+      action: 'COMPLETE_UNIT',
+      questId: 1,
+      unitId: 1,
+      score: 100,
+    });
+  } catch (err) {
+    if (err.statusCode === 400 && err.message.includes('attemptId is required')) {
+      directBypassBlocked = true;
+    }
+  }
+  assert(directBypassBlocked, 'Direct COMPLETE_UNIT without attempt rejected with 400');
+
+  // A1: Start and submit verified lesson attempt
+  const startRes1 = await progressService.startLesson(userId, { questId: 1, unitId: 1 });
+  const unitRes1 = await progressService.submitLesson(userId, {
+    attemptId: startRes1.attemptId,
+    answers: [
+      { questionId: 'u1_q1', selected: 1 },
+      { questionId: 'u1_q2', selected: 1 },
+      { questionId: 'u1_q3', selected: 3 },
+      { questionId: 'u1_q4', selected: 0 },
+    ],
     earnedXp: 999999, // Forged payload should be ignored
     gold: 999999,
   });
 
-  assert(unitRes1.success === true, 'COMPLETE_UNIT succeeded');
+  assert(unitRes1.success === true, 'SUBMIT_LESSON succeeded');
   assert(unitRes1.reward.xp === 60, 'Base XP awarded is 60 (forged 999999 ignored)');
   assert(unitRes1.reward.gold === 30, 'Base Gold awarded is 30 (forged 999999 ignored)');
   assert(unitRes1.reward.wordsLearned === 15, 'wordsLearned incremented by 15');
@@ -82,6 +103,7 @@ async function runSuite() {
     action: 'COMPLETE_UNIT',
     questId: 1,
     unitId: 1,
+    attemptId: startRes1.attemptId,
   });
   assert(unitResDup.success === true, 'Duplicate unit call succeeded');
   assert(unitResDup.reward.xp === 0, 'Duplicate unit gives 0 XP');
@@ -90,23 +112,25 @@ async function runSuite() {
   assert(unitResDup.profile.totalXp === 60, 'totalXp remained 60 (no duplicate reward)');
 
   // A3: Concurrent completion gives exactly one reward
-  const concurrentUnitKey = 'concurrent-unit-test';
-  const [cRes1, cRes2] = await Promise.all([
-    progressService.executeAction(userId, { action: 'COMPLETE_UNIT', questId: 1, unitId: 2 }),
-    progressService.executeAction(userId, { action: 'COMPLETE_UNIT', questId: 1, unitId: 2 }),
+  const startRes2 = await progressService.startLesson(userId, { questId: 1, unitId: 2 });
+  const u2Answers = [
+    { questionId: 'u2_q1', selected: 1 },
+    { questionId: 'u2_q2', selected: 1 },
+    { questionId: 'u2_q3', selected: 0 },
+    { questionId: 'u2_q4', selected: 1 },
+  ];
+  const [cRes1, cRes2] = await Promise.allSettled([
+    progressService.submitLesson(userId, { attemptId: startRes2.attemptId, answers: u2Answers }),
+    progressService.submitLesson(userId, { attemptId: startRes2.attemptId, answers: u2Answers }),
   ]);
 
-  const unit2Rewards = [cRes1.reward.xp, cRes2.reward.xp];
-  assert(
-    (unit2Rewards[0] === 60 && unit2Rewards[1] === 0) ||
-      (unit2Rewards[0] === 0 && unit2Rewards[1] === 60),
-    'Concurrent COMPLETE_UNIT calls for Unit 2 rewarded exactly once'
-  );
+  const fulfilledCount = [cRes1, cRes2].filter(r => r.status === 'fulfilled').length;
+  assert(fulfilledCount === 1, 'Concurrent submission rewarded exactly once');
 
   // A4: Invalid unit rejected
   let invalidUnitFailed = false;
   try {
-    await progressService.executeAction(userId, { action: 'COMPLETE_UNIT', questId: 1, unitId: 99 });
+    await progressService.startLesson(userId, { questId: 1, unitId: 99 });
   } catch (err) {
     if (err.statusCode === 400) invalidUnitFailed = true;
   }

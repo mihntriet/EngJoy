@@ -148,6 +148,25 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_cleanup ON idempotency_keys (created_
 CREATE INDEX IF NOT EXISTS idx_idempotency_user_key ON idempotency_keys (user_id, key);
 
 -- ------------------------------------------------------------
+-- LESSON ATTEMPTS (Server-Verified Progression - Phase 4A.4)
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS lesson_attempts (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    quest_id        INT NOT NULL,
+    unit_id         INT NOT NULL,
+    question_ids    TEXT[] NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'failed', 'consumed')),
+    score           INT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at      TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 minutes')
+);
+
+CREATE INDEX IF NOT EXISTS idx_lesson_attempts_user_unit ON lesson_attempts (user_id, quest_id, unit_id);
+CREATE INDEX IF NOT EXISTS idx_lesson_attempts_status ON lesson_attempts (status);
+
+-- ------------------------------------------------------------
 -- AUTO-UPDATE updated_at TRIGGER
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION trigger_set_updated_at()

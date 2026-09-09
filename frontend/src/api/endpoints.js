@@ -50,6 +50,8 @@ export const BACKEND_ENDPOINTS = {
     STATS: '/progress/stats',
     BY_PHASE: (phaseId) => `/progress/phase/${phaseId}`,
     START: '/progress',
+    LESSON_START: '/progress/lesson/start',
+    LESSON_SUBMIT: '/progress/lesson/submit',
     SUBMIT_SCORE: '/progress/submit-score',
     MIGRATE_GUEST: '/progress/migrate-guest',
     UPDATE_LESSON: (id) => `/progress/${id}/lesson`,

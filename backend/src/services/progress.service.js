@@ -10,6 +10,7 @@ const {
 } = require('../constants/gameCatalog');
 
 const { validateGuestSnapshot, GUEST_PLAYABLE_QUESTS } = require('./guestMigrationValidator');
+const { getLessonContent, LESSON_CONTENT } = require('../constants/lessonData');
 
 const LEVEL_ORDER = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 const PASS_THRESHOLD = 60; // minimum score to pass a phase
@@ -314,6 +315,429 @@ class ProgressService {
 
 
   /**
+   * Start Lesson Attempt (Phase 4A.4)
+   * Creates a pending attempt in lesson_attempts table bound to the authenticated user.
+   * Returns sanitized lesson content (without answer keys or explanations).
+   */
+  async startLesson(userId, { questId, unitId }) {
+    if (!userId) {
+      const err = new Error('userId is required to start a lesson');
+      err.statusCode = 401;
+      throw err;
+    }
+
+    const qId = parseInt(questId, 10);
+    const uId = parseInt(unitId, 10);
+
+    if (!qId || !QUEST_CURRICULUM[qId]) {
+      const err = new Error(`Invalid questId: ${questId}`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const maxUnits = QUEST_CURRICULUM[qId]?.maxUnits || 8;
+    if (!uId || uId < 1 || uId > maxUnits) {
+      const err = new Error(`Invalid unitId: ${unitId} for quest ${qId} (max ${maxUnits})`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const lesson = getLessonContent(qId, uId);
+    if (!lesson) {
+      const err = new Error(`Lesson content not found for quest ${qId} unit ${uId}`);
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const questionIds = Array.isArray(lesson.questions)
+      ? lesson.questions.map((q) => q.id)
+      : [];
+
+    const { rows: attemptRows } = await pool.query(
+      `INSERT INTO lesson_attempts (
+         user_id,
+         quest_id,
+         unit_id,
+         question_ids,
+         status,
+         score,
+         expires_at
+       )
+       VALUES ($1, $2, $3, $4, 'pending', NULL, NOW() + INTERVAL '30 minutes')
+       RETURNING id, quest_id, unit_id, status, created_at, expires_at`,
+      [userId, qId, uId, questionIds]
+    );
+
+    const attempt = attemptRows[0];
+
+    // Sanitize questions: strip answer and explanation
+    const sanitizedQuestions = (lesson.questions || []).map((q) => ({
+      id: q.id,
+      type: q.type,
+      question: q.question,
+      options: q.options,
+    }));
+
+    return {
+      attemptId: attempt.id,
+      questId: attempt.quest_id,
+      unitId: attempt.unit_id,
+      status: attempt.status,
+      title: lesson.title,
+      intro: lesson.intro,
+      vocabulary: lesson.vocabulary,
+      questions: sanitizedQuestions,
+      expiresAt: attempt.expires_at,
+    };
+  }
+
+  /**
+   * Submit Lesson Answers & Authoritative Score Calculation (Phase 4A.4)
+   * Calculates score from submitted answers against server question bank.
+   * Gates reward: score >= 60 unlocks unit and awards 60 XP, 30 Gold, 15 words.
+   * Atomically commits attempt state and progression inside a PostgreSQL transaction.
+   */
+  async submitLesson(userId, { attemptId, answers, idempotencyKey }) {
+    if (!userId) {
+      const err = new Error('userId is required');
+      err.statusCode = 401;
+      throw err;
+    }
+
+    if (!attemptId || typeof attemptId !== 'string' || attemptId.trim() === '') {
+      const err = new Error('attemptId is required');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Idempotency Check
+      if (idempotencyKey) {
+        const { rows: existingKey } = await client.query(
+          `SELECT * FROM idempotency_keys WHERE user_id = $1 AND key = $2 FOR UPDATE`,
+          [userId, idempotencyKey]
+        );
+
+        if (existingKey.length > 0) {
+          const record = existingKey[0];
+          await client.query('COMMIT');
+          return record.response;
+        }
+      }
+
+      // 2. Fetch and Lock Attempt Row
+      const { rows: attemptRows } = await client.query(
+        `SELECT * FROM lesson_attempts WHERE id = $1 FOR UPDATE`,
+        [attemptId]
+      );
+
+      if (attemptRows.length === 0) {
+        const err = new Error(`Invalid attemptId: attempt not found`);
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const attempt = attemptRows[0];
+
+      // 3. Verify Attempt Ownership
+      if (attempt.user_id !== userId) {
+        const err = new Error('Attempt does not belong to the authenticated user');
+        err.statusCode = 403;
+        throw err;
+      }
+
+      // 4. Verify Expiration
+      if (new Date() > new Date(attempt.expires_at)) {
+        const err = new Error('Attempt has expired. Please start a new lesson attempt.');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      // 5. Verify Lifecycle Status
+      if (attempt.status === 'consumed') {
+        const err = new Error('Attempt has already been completed and consumed');
+        err.statusCode = 409;
+        throw err;
+      }
+
+      if (attempt.status === 'failed') {
+        const err = new Error('Failed attempt cannot be resubmitted. Please start a new attempt.');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      if (attempt.status !== 'pending') {
+        const err = new Error(`Invalid attempt status: ${attempt.status}`);
+        err.statusCode = 400;
+        throw err;
+      }
+
+      // 6. Validate Answers Payload
+      if (!Array.isArray(answers) || answers.length === 0) {
+        const err = new Error('A valid non-empty answers array is required');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const lesson = getLessonContent(attempt.quest_id, attempt.unit_id);
+      if (!lesson) {
+        const err = new Error(`Curriculum content not found for attempt`);
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const attemptQIds = new Set(attempt.question_ids || []);
+      const answerMap = new Map();
+
+      for (const item of answers) {
+        if (!item || typeof item !== 'object' || !item.questionId || item.selected === undefined) {
+          const err = new Error('Each answer must contain questionId and selected option index');
+          err.statusCode = 400;
+          throw err;
+        }
+
+        if (!attemptQIds.has(item.questionId)) {
+          const err = new Error(`Question ID "${item.questionId}" does not belong to this attempt`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        answerMap.set(item.questionId, Number(item.selected));
+      }
+
+      if (answerMap.size !== attemptQIds.size) {
+        const err = new Error(`All ${attemptQIds.size} questions must be answered (received ${answerMap.size})`);
+        err.statusCode = 400;
+        throw err;
+      }
+
+      // 7. Calculate Authoritative Score on Backend
+      let correctCount = 0;
+      const questionResults = [];
+
+      for (const q of lesson.questions) {
+        const selected = answerMap.get(q.id);
+        const isCorrect = selected === q.answer;
+        if (isCorrect) {
+          correctCount++;
+        }
+        questionResults.push({
+          questionId: q.id,
+          selected,
+          correct: q.answer,
+          isCorrect,
+          explanation: q.explanation,
+        });
+      }
+
+      const totalQ = lesson.questions.length;
+      const calculatedScore = totalQ > 0 ? Math.round((correctCount / totalQ) * 100) : 0;
+      const passed = calculatedScore >= PASS_THRESHOLD;
+
+      // 8. Gate on PASS_THRESHOLD
+      if (!passed) {
+        // Mark attempt as failed
+        await client.query(
+          `UPDATE lesson_attempts
+           SET status = 'failed', score = $2
+           WHERE id = $1`,
+          [attemptId, calculatedScore]
+        );
+
+        const responsePayload = {
+          success: true,
+          passed: false,
+          score: calculatedScore,
+          message: `Bài học chưa đạt yêu cầu (${calculatedScore}% / ${PASS_THRESHOLD}%). Vui lòng thử lại!`,
+          attemptId,
+          results: questionResults,
+        };
+
+        if (idempotencyKey) {
+          await client.query(
+            `INSERT INTO idempotency_keys (user_id, key, action_type, response)
+             VALUES ($1, $2, 'SUBMIT_LESSON', $3)
+             ON CONFLICT (user_id, key) DO UPDATE SET response = EXCLUDED.response`,
+            [userId, idempotencyKey, JSON.stringify(responsePayload)]
+          );
+        }
+
+        await client.query('COMMIT');
+        return responsePayload;
+      }
+
+      // 9. PASSED (score >= 60): Consume attempt and atomically award progression
+      await client.query(
+        `UPDATE lesson_attempts
+         SET status = 'consumed', score = $2
+         WHERE id = $1`,
+        [attemptId, calculatedScore]
+      );
+
+      // Lock player profile FOR UPDATE
+      let { rows: profileRows } = await client.query(
+        `SELECT * FROM player_profiles WHERE user_id = $1 FOR UPDATE`,
+        [userId]
+      );
+
+      if (profileRows.length === 0) {
+        const { rows: seeded } = await client.query(
+          `INSERT INTO player_profiles (
+             user_id, total_xp, current_level, gold, streak_days,
+             words_learned, saved_words, quest_units, owned_item_ids,
+             equipped_ids, guest_migrated
+           )
+           VALUES ($1, 0, 1, 0, 0, 0, '{}', '{}', '{}', '{}', FALSE)
+           RETURNING *`,
+          [userId]
+        );
+        profileRows = seeded;
+      }
+
+      const profile = profileRows[0];
+      let totalXp = parseInt(profile.total_xp, 10) || 0;
+      let gold = parseInt(profile.gold, 10) || 0;
+      let wordsLearned = parseInt(profile.words_learned, 10) || 0;
+      let missions = Array.isArray(profile.missions) ? [...profile.missions] : [...DEFAULT_MISSIONS];
+      let questUnits = profile.quest_units && typeof profile.quest_units === 'object'
+        ? { ...profile.quest_units }
+        : {};
+
+      const questId = attempt.quest_id;
+      const unitId = attempt.unit_id;
+      const maxUnits = QUEST_CURRICULUM[questId]?.maxUnits || 8;
+      const qKey = String(questId);
+      let currentUnits = Array.isArray(questUnits[qKey]) ? [...questUnits[qKey]] : [];
+
+      let missionBonus = { xp: 0, gold: 0, completed: [] };
+      const advanceMissionHelper = (type, amount) => {
+        missions = missions.map((m) => {
+          if (m.type === type && !m.done_flag) {
+            const newDone = Math.min(m.total, (m.done || 0) + amount);
+            const isFinished = newDone >= m.total;
+            if (isFinished) {
+              const bonus = MISSION_BONUS[type] || { xp: 0, gold: 0 };
+              missionBonus.xp += bonus.xp;
+              missionBonus.gold += bonus.gold;
+              missionBonus.completed.push(m.title);
+              return { ...m, done: newDone, done_flag: true };
+            }
+            return { ...m, done: newDone, done_flag: false };
+          }
+          return m;
+        });
+      };
+
+      let rewardSummary = { xp: 0, gold: 0, wordsLearned: 0 };
+      const existingUnit = currentUnits.find((u) => u.id === unitId);
+
+      if (existingUnit && existingUnit.status === 'done') {
+        // Natural idempotency: already completed
+        rewardSummary = { xp: 0, gold: 0, wordsLearned: 0, alreadyCompleted: true };
+      } else {
+        // Mark unit done & activate next unit
+        let found = false;
+        currentUnits = currentUnits.map((u) => {
+          if (u.id === unitId) {
+            found = true;
+            return { ...u, status: 'done' };
+          }
+          return u;
+        });
+        if (!found) {
+          currentUnits.push({ id: unitId, status: 'done' });
+        }
+
+        if (unitId < maxUnits) {
+          const nextIdx = currentUnits.findIndex((u) => u.id === unitId + 1);
+          if (nextIdx >= 0) {
+            if (currentUnits[nextIdx].status !== 'done') {
+              currentUnits[nextIdx] = { ...currentUnits[nextIdx], status: 'active' };
+            }
+          } else {
+            currentUnits.push({ id: unitId + 1, status: 'active' });
+          }
+        }
+
+        questUnits[qKey] = currentUnits;
+
+        const baseReward = ACTION_REWARDS.COMPLETE_UNIT;
+        rewardSummary.xp = baseReward.xp;
+        rewardSummary.gold = baseReward.gold;
+        rewardSummary.wordsLearned = baseReward.wordsLearned;
+
+        totalXp += baseReward.xp;
+        gold += baseReward.gold;
+        wordsLearned += baseReward.wordsLearned;
+
+        advanceMissionHelper('words', baseReward.wordsLearned);
+
+        totalXp += missionBonus.xp;
+        gold += missionBonus.gold;
+      }
+
+      const { level: currentLevel } = calculateLevel(totalXp);
+
+      const { rows: updatedProfileRows } = await client.query(
+        `UPDATE player_profiles
+         SET total_xp = $2,
+             current_level = $3,
+             gold = $4,
+             words_learned = $5,
+             missions = $6,
+             quest_units = $7,
+             updated_at = NOW()
+         WHERE user_id = $1
+         RETURNING *`,
+        [
+          userId,
+          totalXp,
+          currentLevel,
+          gold,
+          wordsLearned,
+          JSON.stringify(missions),
+          JSON.stringify(questUnits),
+        ]
+      );
+
+      const finalProfile = this._formatProfile(updatedProfileRows[0]);
+      if (missionBonus.xp > 0 || missionBonus.gold > 0) {
+        rewardSummary.missionBonus = missionBonus;
+      }
+
+      const responsePayload = {
+        success: true,
+        passed: true,
+        score: calculatedScore,
+        reward: rewardSummary,
+        profile: finalProfile,
+        attemptId,
+        results: questionResults,
+      };
+
+      if (idempotencyKey) {
+        await client.query(
+          `INSERT INTO idempotency_keys (user_id, key, action_type, response)
+           VALUES ($1, $2, 'SUBMIT_LESSON', $3)
+           ON CONFLICT (user_id, key) DO UPDATE SET response = EXCLUDED.response`,
+          [userId, idempotencyKey, JSON.stringify(responsePayload)]
+        );
+      }
+
+      await client.query('COMMIT');
+      return responsePayload;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
    * Authoritative Progression Engine (Phase 2B.1)
    * Executes game actions, calculates rewards on the server, updates player_profiles
    * inside a strict PostgreSQL transaction with row locking, and ensures idempotency.
@@ -323,6 +747,13 @@ class ProgressService {
    */
   async executeAction(userId, payload) {
     const { action, idempotencyKey } = payload;
+    if (action === 'START_LESSON') {
+      return this.startLesson(userId, payload);
+    }
+    if (action === 'SUBMIT_LESSON') {
+      return this.submitLesson(userId, payload);
+    }
+
     const client = await pool.connect();
 
     try {
@@ -442,6 +873,13 @@ class ProgressService {
       // 5. Action Execution
       switch (action) {
         case 'COMPLETE_UNIT': {
+          const attemptId = payload.attemptId;
+          if (!attemptId || typeof attemptId !== 'string' || attemptId.trim() === '') {
+            const err = new Error('attemptId is required for COMPLETE_UNIT. Direct completion without a verified lesson attempt is forbidden.');
+            err.statusCode = 400;
+            throw err;
+          }
+
           const questId = parseInt(payload.questId, 10);
           const unitId = parseInt(payload.unitId, 10);
 
@@ -456,6 +894,37 @@ class ProgressService {
             const err = new Error(
               `Invalid unitId: ${payload.unitId} for quest ${questId} (max ${maxUnits})`
             );
+            err.statusCode = 400;
+            throw err;
+          }
+
+          // Verify attempt in DB
+          const { rows: attemptRows } = await client.query(
+            `SELECT * FROM lesson_attempts WHERE id = $1 FOR UPDATE`,
+            [attemptId]
+          );
+
+          if (attemptRows.length === 0) {
+            const err = new Error(`Invalid attemptId: attempt not found`);
+            err.statusCode = 400;
+            throw err;
+          }
+
+          const attempt = attemptRows[0];
+          if (attempt.user_id !== userId) {
+            const err = new Error(`Attempt does not belong to user`);
+            err.statusCode = 403;
+            throw err;
+          }
+
+          if (attempt.quest_id !== questId || attempt.unit_id !== unitId) {
+            const err = new Error(`Attempt does not match questId ${questId} or unitId ${unitId}`);
+            err.statusCode = 400;
+            throw err;
+          }
+
+          if (attempt.status !== 'consumed') {
+            const err = new Error(`Attempt is not in verified/consumed state (status: ${attempt.status})`);
             err.statusCode = 400;
             throw err;
           }
