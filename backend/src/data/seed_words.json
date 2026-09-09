@@ -1,0 +1,348 @@
+[
+  {
+    "word": "serendipity",
+    "phonetics": [
+      {
+        "text": "/ˌser.ənˈdɪp.ɪ.ti/",
+        "audio": "https://api.dictionaryapi.dev/media/pronunciations/en/serendipity-us.mp3"
+      }
+    ],
+    "meanings": [
+      {
+        "partOfSpeech": "noun",
+        "definitions": [
+          {
+            "definition": "The occurrence of events by chance in a happy or beneficial way.",
+            "synonyms": ["fortune", "luck", "chance", "coincidence", "happenstance"],
+            "antonyms": ["misfortune", "bad luck", "design", "plan"]
+          }
+        ],
+        "examples": [
+          {
+            "sentence": "It was pure serendipity that they met at the airport.",
+            "translation": "Thật là một sự may mắn tình cờ khi họ gặp nhau ở sân bay."
+          },
+          {
+            "sentence": "Many great scientific discoveries were made through serendipity.",
+            "translation": "Nhiều phát kiến khoa học vĩ đại ra đời nhờ sự tình cờ may mắn."
+          }
+        ]
+      }
+    ],
+    "audio": {
+      "us": "https://api.dictionaryapi.dev/media/pronunciations/en/serendipity-us.mp3",
+      "uk": ""
+    },
+    "origin": "Xuất phát từ câu chuyện cổ Ba Tư 'The Three Princes of Serendip' — nơi các hoàng tử thường khám phá những điều kỳ diệu một cách tình cờ.",
+    "frequency": 4,
+    "level": "C1",
+    "tags": ["vocabulary", "c1", "literature"]
+  },
+  {
+    "word": "ephemeral",
+    "phonetics": [
+      {
+        "text": "/ɪˈfem.ər.əl/",
+        "audio": "https://api.dictionaryapi.dev/media/pronunciations/en/ephemeral-us.mp3"
+      }
+    ],
+    "meanings": [
+      {
+        "partOfSpeech": "adjective",
+        "definitions": [
+          {
+            "definition": "Lasting for a very short time; transitory; fleeting.",
+            "synonyms": ["fleeting", "transitory", "momentary", "brief", "temporary"],
+            "antonyms": ["permanent", "eternal", "enduring", "lasting"]
+          }
+        ],
+        "examples": [
+          {
+            "sentence": "Fame in the modern world is often ephemeral.",
+            "translation": "Sự nổi tiếng trong thế giới hiện đại thường rất phù du, chóng tàn."
+          },
+          {
+            "sentence": "The beauty of cherry blossoms is cherished because it is ephemeral.",
+            "translation": "Vẻ đẹp của hoa anh đào được trân trọng chính vì nó thoáng qua."
+          }
+        ]
+      }
+    ],
+    "audio": {
+      "us": "https://api.dictionaryapi.dev/media/pronunciations/en/ephemeral-us.mp3",
+      "uk": ""
+    },
+    "origin": "Từ tiếng Hy Lạp 'ephemeros', có nghĩa là 'chỉ tồn tại trong một ngày'.",
+    "frequency": 3,
+    "level": "C1",
+    "tags": ["vocabulary", "c1", "time"]
+  },
+  {
+    "word": "nostalgia",
+    "phonetics": [
+      {
+        "text": "/nɒsˈtæl.dʒə/",
+        "audio": "https://api.dictionaryapi.dev/media/pronunciations/en/nostalgia-us.mp3"
+      }
+    ],
+    "meanings": [
+      {
+        "partOfSpeech": "noun",
+        "definitions": [
+          {
+            "definition": "A sentimental longing or wistful affection for the past.",
+            "synonyms": ["longing", "reminiscence", "homesickness", "yearning"],
+            "antonyms": ["indifference", "futurism"]
+          }
+        ],
+        "examples": [
+          {
+            "sentence": "Listening to old songs filled him with nostalgia.",
+            "translation": "Lắng nghe những giai điệu xưa khiến anh ấy ngập tràn nỗi hoài niệm."
+          }
+        ]
+      }
+    ],
+    "audio": {
+      "us": "https://api.dictionaryapi.dev/media/pronunciations/en/nostalgia-us.mp3",
+      "uk": ""
+    },
+    "origin": "Ghép từ tiếng Hy Lạp 'nostos' (trở về quê hương) và 'algos' (nỗi đau đớn).",
+    "frequency": 4,
+    "level": "B2",
+    "tags": ["vocabulary", "b2", "emotion"]
+  },
+  {
+    "word": "melancholy",
+    "phonetics": [
+      {
+        "text": "/ˈmel.əŋ.kɒl.i/",
+        "audio": "https://api.dictionaryapi.dev/media/pronunciations/en/melancholy-us.mp3"
+      }
+    ],
+    "meanings": [
+      {
+        "partOfSpeech": "noun",
+        "definitions": [
+          {
+            "definition": "A feeling of pensive sadness, typically with no obvious cause.",
+            "synonyms": ["sorrow", "sadness", "depression", "gloom"],
+            "antonyms": ["happiness", "cheerfulness", "joy"]
+          }
+        ],
+        "examples": [
+          {
+            "sentence": "An air of melancholy hung over the empty house.",
+            "translation": "Một thoáng u buồn bao trùm lên căn nhà trống vắng."
+          }
+        ]
+      }
+    ],
+    "audio": {
+      "us": "https://api.dictionaryapi.dev/media/pronunciations/en/melancholy-us.mp3",
+      "uk": ""
+    },
+    "origin": "Từ tiếng Hy Lạp cổ 'melankholia', có nghĩa là 'mật đen' theo thuyết bốn thể dịch y học cổ.",
+    "frequency": 3,
+    "level": "B2",
+    "tags": ["vocabulary", "b2", "emotion"]
+  },
+  {
+    "word": "ubiquitous",
+    "phonetics": [
+      {
+        "text": "/juːˈbɪk.wɪ.təs/",
+        "audio": "https://api.dictionaryapi.dev/media/pronunciations/en/ubiquitous-us.mp3"
+      }
+    ],
+    "meanings": [
+      {
+        "partOfSpeech": "adjective",
+        "definitions": [
+          {
+            "definition": "Present, appearing, or found everywhere.",
+            "synonyms": ["omnipresent", "pervasive", "everywhere", "universal"],
+            "antonyms": ["rare", "scarce", "uncommon", "absent"]
+          }
+        ],
+        "examples": [
+          {
+            "sentence": "Smartphones have become ubiquitous in daily modern life.",
+            "translation": "Điện thoại thông minh đã trở nên phổ biến ở khắp mọi nơi trong đời sống hiện đại."
+          }
+        ]
+      }
+    ],
+    "audio": {
+      "us": "https://api.dictionaryapi.dev/media/pronunciations/en/ubiquitous-us.mp3",
+      "uk": ""
+    },
+    "origin": "Từ tiếng Latin 'ubique' có nghĩa là 'ở mọi nơi'.",
+    "frequency": 4,
+    "level": "C1",
+    "tags": ["vocabulary", "c1", "general"]
+  },
+  {
+    "word": "eloquent",
+    "phonetics": [
+      {
+        "text": "/ˈel.ə.kwənt/",
+        "audio": "https://api.dictionaryapi.dev/media/pronunciations/en/eloquent-us.mp3"
+      }
+    ],
+    "meanings": [
+      {
+        "partOfSpeech": "adjective",
+        "definitions": [
+          {
+            "definition": "Fluent or persuasive in speaking or writing.",
+            "synonyms": ["articulate", "fluent", "persuasive", "expressive"],
+            "antonyms": ["inarticulate", "hesitant"]
+          }
+        ],
+        "examples": [
+          {
+            "sentence": "She gave an eloquent speech that moved the entire audience.",
+            "translation": "Cô ấy đã có một bài phát biểu hùng hồn, lay động toàn bộ khán giả."
+          }
+        ]
+      }
+    ],
+    "audio": {
+      "us": "https://api.dictionaryapi.dev/media/pronunciations/en/eloquent-us.mp3",
+      "uk": ""
+    },
+    "origin": "Từ tiếng Latin 'eloquens', xuất phát từ 'eloqui' (nói ra rõ ràng).",
+    "frequency": 4,
+    "level": "B2",
+    "tags": ["vocabulary", "b2", "communication"]
+  },
+  {
+    "word": "fleeting",
+    "phonetics": [
+      {
+        "text": "/ˈfliː.tɪŋ/",
+        "audio": ""
+      }
+    ],
+    "meanings": [
+      {
+        "partOfSpeech": "adjective",
+        "definitions": [
+          {
+            "definition": "Lasting for a very short time.",
+            "synonyms": ["ephemeral", "brief", "transient"],
+            "antonyms": ["lasting", "permanent"]
+          }
+        ],
+        "examples": [
+          {
+            "sentence": "For a fleeting moment, she thought she saw him.",
+            "translation": "Trong một khoảnh khắc thoáng qua, cô nghĩ rằng mình đã nhìn thấy anh ấy."
+          }
+        ]
+      }
+    ],
+    "audio": { "us": "", "uk": "" },
+    "origin": "Bắt nguồn từ tiếng Anh cổ 'fleotan' (trôi nổi, lướt qua).",
+    "frequency": 3,
+    "level": "B2",
+    "tags": ["vocabulary", "b2"]
+  },
+  {
+    "word": "fortune",
+    "phonetics": [
+      {
+        "text": "/ˈfɔː.tʃuːn/",
+        "audio": ""
+      }
+    ],
+    "meanings": [
+      {
+        "partOfSpeech": "noun",
+        "definitions": [
+          {
+            "definition": "Chance or luck as an external, arbitrary agent in human affairs.",
+            "synonyms": ["luck", "serendipity", "providence"],
+            "antonyms": ["misfortune"]
+          }
+        ],
+        "examples": [
+          {
+            "sentence": "Fortune smiled upon him on that fateful day.",
+            "translation": "Vận may đã mỉm cười với anh ấy vào ngày định mệnh đó."
+          }
+        ]
+      }
+    ],
+    "audio": { "us": "", "uk": "" },
+    "origin": "Từ tiếng Latin 'fortuna' (vận số, số phận).",
+    "frequency": 4,
+    "level": "B1",
+    "tags": ["vocabulary", "b1"]
+  },
+  {
+    "word": "articulate",
+    "phonetics": [
+      {
+        "text": "/ɑːˈtɪk.jə.lət/",
+        "audio": ""
+      }
+    ],
+    "meanings": [
+      {
+        "partOfSpeech": "adjective",
+        "definitions": [
+          {
+            "definition": "Having or showing the ability to speak fluently and coherently.",
+            "synonyms": ["eloquent", "fluent", "clear"],
+            "antonyms": ["inarticulate"]
+          }
+        ],
+        "examples": [
+          {
+            "sentence": "An articulate spokesperson represented the community.",
+            "translation": "Một người phát ngôn lưu loát đã đại diện cho cộng đồng."
+          }
+        ]
+      }
+    ],
+    "audio": { "us": "", "uk": "" },
+    "origin": "Từ tiếng Latin 'articulatus' (rõ ràng từng khớp âm).",
+    "frequency": 3,
+    "level": "B2",
+    "tags": ["vocabulary", "b2"]
+  },
+  {
+    "word": "benevolent",
+    "phonetics": [
+      {
+        "text": "/bəˈnev.əl.ənt/",
+        "audio": ""
+      }
+    ],
+    "meanings": [
+      {
+        "partOfSpeech": "adjective",
+        "definitions": [
+          {
+            "definition": "Well meaning and kindly.",
+            "synonyms": ["kind", "generous", "altruistic", "compassionate"],
+            "antonyms": ["malevolent", "cruel", "unkind"]
+          }
+        ],
+        "examples": [
+          {
+            "sentence": "A benevolent gentleman donated anonymously to the school.",
+            "translation": "Một quý ông nhân từ đã quyên góp ẩn danh cho ngôi trường."
+          }
+        ]
+      }
+    ],
+    "audio": { "us": "", "uk": "" },
+    "origin": "Từ tiếng Latin 'bene' (tốt) và 'velle' (muốn, chúc).",
+    "frequency": 3,
+    "level": "B2",
+    "tags": ["vocabulary", "b2"]
+  }
+]
