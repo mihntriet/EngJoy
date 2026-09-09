@@ -31,7 +31,7 @@ const submitLessonSchema = Joi.object({
 
 const actionSchema = Joi.object({
   action: Joi.string()
-    .valid('START_LESSON', 'SUBMIT_LESSON', 'COMPLETE_UNIT', 'COMPLETE_QUIZ', 'SAVE_WORD', 'CHAT_MESSAGE', 'BUY_ITEM')
+    .valid('START_LESSON', 'SUBMIT_LESSON', 'COMPLETE_UNIT', 'COMPLETE_QUIZ', 'SAVE_WORD', 'CHAT_MESSAGE', 'BUY_ITEM', 'EQUIP_ITEM')
     .required(),
   idempotencyKey: Joi.string().max(255).optional().allow(null, ''),
   attemptId: Joi.string().uuid().optional().allow(null, ''),
@@ -47,6 +47,8 @@ const actionSchema = Joi.object({
   word: Joi.string().max(100).optional().allow(''),
   message: Joi.string().max(2000).optional().allow(''),
   itemId: Joi.alternatives().try(Joi.string(), Joi.number()).optional(),
+  equippedIds: Joi.any().strip(),
+  equipped_ids: Joi.any().strip(),
   earnedXp: Joi.any().strip(),
   gold: Joi.any().strip(),
   wordsLearned: Joi.any().strip(),

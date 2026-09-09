@@ -1121,6 +1121,44 @@ class ProgressService {
           break;
         }
 
+        case 'EQUIP_ITEM': {
+          const itemId = String(payload.itemId || '').trim();
+          const catalogItem = STORE_ITEMS[itemId];
+
+          if (!catalogItem) {
+            const err = new Error(`Item ${itemId} not found in store catalog`);
+            err.statusCode = 400;
+            throw err;
+          }
+
+          if (!ownedItemIds.includes(itemId)) {
+            const err = new Error(`Item "${catalogItem.name}" must be purchased before equipping`);
+            err.statusCode = 400;
+            throw err;
+          }
+
+          let isEquipped = false;
+          if (equippedIds.includes(itemId)) {
+            equippedIds = equippedIds.filter((id) => id !== itemId);
+            isEquipped = false;
+          } else {
+            if (equippedIds.length >= 2) {
+              const err = new Error('Cannot equip more than 2 items simultaneously. Unequip an item first.');
+              err.statusCode = 400;
+              throw err;
+            }
+            equippedIds = [...equippedIds, itemId];
+            isEquipped = true;
+          }
+
+          rewardSummary = {
+            equipped: isEquipped,
+            itemId,
+            equippedIds,
+          };
+          break;
+        }
+
         default: {
           const err = new Error(`Unsupported action: ${action}`);
           err.statusCode = 400;

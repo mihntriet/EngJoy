@@ -424,6 +424,105 @@ async function runSuite() {
   assert(stats.gold >= 0, 'getUserStats reads authoritative gold from player_profiles');
   assert(stats.current_level >= 1, 'getUserStats reads current_level');
 
+  // -------------------------------------------------------------
+  // TEST K: EQUIP_ITEM (Phase 4B.2 Server-Authoritative Equipment)
+  // -------------------------------------------------------------
+  console.log('\n▶ Test K: EQUIP_ITEM');
+
+  // K1: Invalid item not in catalog rejected with 400
+  let invalidItemFailed = false;
+  try {
+    await progressService.executeAction(userId, {
+      action: 'EQUIP_ITEM',
+      itemId: '9999',
+    });
+  } catch (err) {
+    if (err.statusCode === 400) invalidItemFailed = true;
+  }
+  assert(invalidItemFailed, 'Invalid item not in catalog rejected with 400');
+
+  // K2: Unowned item rejected with 400
+  let unownedItemFailed = false;
+  try {
+    await progressService.executeAction(userId, {
+      action: 'EQUIP_ITEM',
+      itemId: '2', // Item 2 not yet purchased
+    });
+  } catch (err) {
+    if (err.statusCode === 400) unownedItemFailed = true;
+  }
+  assert(unownedItemFailed, 'Unowned item rejected with 400');
+
+  // K3: Equip owned item 4 (purchased in Test E)
+  // Also pass malicious client-supplied equippedIds array to verify it is completely ignored
+  const equipRes1 = await progressService.executeAction(userId, {
+    action: 'EQUIP_ITEM',
+    itemId: '4',
+    equippedIds: ['1', '2', '3', '4'], // Forged array - must be ignored!
+    idempotencyKey: 'equip_item_4_op1',
+  });
+  assert(equipRes1.success === true, 'Equip item 4 succeeded');
+  assert(equipRes1.reward.equipped === true, 'Item 4 reported as equipped');
+  assert(equipRes1.profile.equippedIds.length === 1 && equipRes1.profile.equippedIds[0] === '4', 'Profile equippedIds is ["4"] (client-forged array ignored)');
+
+  // K4: Verify PostgreSQL DB directly contains ['4']
+  const { rows: dbRows1 } = await pool.query('SELECT equipped_ids FROM player_profiles WHERE user_id = $1', [userId]);
+  assert(Array.isArray(dbRows1[0].equipped_ids) && dbRows1[0].equipped_ids.includes('4'), 'PostgreSQL equipped_ids table column contains ["4"]');
+
+  // K5: Idempotency with SAME key returns identical response without toggling/unequipping
+  const equipRes1Retry = await progressService.executeAction(userId, {
+    action: 'EQUIP_ITEM',
+    itemId: '4',
+    idempotencyKey: 'equip_item_4_op1',
+  });
+  assert(equipRes1Retry.reward.equipped === true, 'Retrying with same idempotencyKey returns cached equipped state (not toggled)');
+
+  // K6: Unequip item 4 with a NEW operation key
+  const unequipRes = await progressService.executeAction(userId, {
+    action: 'EQUIP_ITEM',
+    itemId: '4',
+    idempotencyKey: 'unequip_item_4_op2',
+  });
+  assert(unequipRes.success === true, 'Unequip item 4 succeeded');
+  assert(unequipRes.reward.equipped === false, 'Item 4 reported as unequipped');
+  assert(unequipRes.profile.equippedIds.length === 0, 'Profile equippedIds is empty []');
+
+  // K7: Verify PostgreSQL DB column cleared
+  const { rows: dbRows2 } = await pool.query('SELECT equipped_ids FROM player_profiles WHERE user_id = $1', [userId]);
+  assert(Array.isArray(dbRows2[0].equipped_ids) && dbRows2[0].equipped_ids.length === 0, 'PostgreSQL equipped_ids table column cleared to []');
+
+  // K8: Max 2 Equipped Items Limit Enforcement
+  // Grant gold to buy items 1 and 2
+  await pool.query('UPDATE player_profiles SET gold = 3000 WHERE user_id = $1', [userId]);
+  await progressService.executeAction(userId, { action: 'BUY_ITEM', itemId: '1' });
+  await progressService.executeAction(userId, { action: 'BUY_ITEM', itemId: '2' });
+
+  // Equip item 4
+  await progressService.executeAction(userId, { action: 'EQUIP_ITEM', itemId: '4' });
+  // Equip item 1
+  const equipTwo = await progressService.executeAction(userId, { action: 'EQUIP_ITEM', itemId: '1' });
+  assert(equipTwo.profile.equippedIds.length === 2, 'Equipped 2 items ([4, 1]) successfully');
+
+  // Attempt to equip 3rd item (item 2) -> must reject with 400
+  let maxEquipFailed = false;
+  try {
+    await progressService.executeAction(userId, {
+      action: 'EQUIP_ITEM',
+      itemId: '2',
+    });
+  } catch (err) {
+    if (err.statusCode === 400) maxEquipFailed = true;
+  }
+  assert(maxEquipFailed, 'Equipping 3rd item rejected with 400 (max 2 limit enforced)');
+
+  // Verify DB state still has exactly 2 items
+  const { rows: dbRows3 } = await pool.query('SELECT equipped_ids FROM player_profiles WHERE user_id = $1', [userId]);
+  assert(dbRows3[0].equipped_ids.length === 2, 'PostgreSQL equipped_ids still contains exactly 2 items');
+
+  // K9: Persistence across getProfile()
+  const freshProfile = await progressService.getProfile(userId);
+  assert(freshProfile.equippedIds.length === 2, 'getProfile() faithfully reflects persisted equipment');
+
   console.log('\n=================================================================');
   console.log(`🎉 ALL PHASE 2B.1 PROGRESSION ENGINE TESTS PASSED: ${passedTests}/${totalTests}`);
   console.log('=================================================================\n');
