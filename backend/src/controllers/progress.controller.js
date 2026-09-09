@@ -9,17 +9,47 @@ const submitScoreSchema = Joi.object({
   timeSpent: Joi.number().integer().min(0).max(1440).default(0),
 });
 
+const startLessonSchema = Joi.object({
+  questId: Joi.number().integer().min(1).max(6).required(),
+  unitId: Joi.number().integer().min(1).max(30).required(),
+});
+
+const submitLessonSchema = Joi.object({
+  attemptId: Joi.string().uuid().required(),
+  answers: Joi.array().items(
+    Joi.object({
+      questionId: Joi.string().required(),
+      selected: Joi.number().integer().min(0).max(10).required(),
+    })
+  ).min(1).required(),
+  idempotencyKey: Joi.string().max(255).optional().allow(null, ''),
+  score: Joi.any().strip(),
+  earnedXp: Joi.any().strip(),
+  gold: Joi.any().strip(),
+  wordsLearned: Joi.any().strip(),
+});
+
 const actionSchema = Joi.object({
   action: Joi.string()
-    .valid('COMPLETE_UNIT', 'COMPLETE_QUIZ', 'SAVE_WORD', 'CHAT_MESSAGE', 'BUY_ITEM')
+    .valid('START_LESSON', 'SUBMIT_LESSON', 'COMPLETE_UNIT', 'COMPLETE_QUIZ', 'SAVE_WORD', 'CHAT_MESSAGE', 'BUY_ITEM')
     .required(),
   idempotencyKey: Joi.string().max(255).optional().allow(null, ''),
+  attemptId: Joi.string().uuid().optional().allow(null, ''),
   questId: Joi.number().integer().min(1).max(6).optional(),
   unitId: Joi.number().integer().min(1).max(30).optional(),
+  answers: Joi.array().items(
+    Joi.object({
+      questionId: Joi.string().required(),
+      selected: Joi.number().integer().min(0).max(10).required(),
+    })
+  ).optional(),
   score: Joi.number().min(0).max(100).optional(),
   word: Joi.string().max(100).optional().allow(''),
   message: Joi.string().max(2000).optional().allow(''),
   itemId: Joi.alternatives().try(Joi.string(), Joi.number()).optional(),
+  earnedXp: Joi.any().strip(),
+  gold: Joi.any().strip(),
+  wordsLearned: Joi.any().strip(),
 });
 
 const snapshotTransportSchema = Joi.object({
@@ -88,6 +118,78 @@ class ProgressController {
       return ApiResponse.success(res, {
         data: result,
         message: `Action ${value.action} executed successfully`,
+      });
+    } catch (err) {
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({
+          success: false,
+          error: err.message,
+        });
+      }
+      next(err);
+    }
+  }
+
+  /**
+   * POST /api/v1/progress/lesson/start
+   * Start a server-verified lesson attempt (Phase 4A.4)
+   */
+  async startLesson(req, res, next) {
+    try {
+      const { error, value } = startLessonSchema.validate(req.body, {
+        abortEarly: false,
+        stripUnknown: true,
+      });
+
+      if (error) {
+        const errors = error.details.map((d) => ({
+          field: d.path.join('.'),
+          message: d.message,
+        }));
+        return ApiResponse.badRequest(res, 'Validation failed', errors);
+      }
+
+      const result = await progressService.startLesson(req.user.id, value);
+
+      return ApiResponse.success(res, {
+        data: result,
+        message: 'Lesson attempt started successfully',
+      });
+    } catch (err) {
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({
+          success: false,
+          error: err.message,
+        });
+      }
+      next(err);
+    }
+  }
+
+  /**
+   * POST /api/v1/progress/lesson/submit
+   * Submit lesson answers for server-side scoring & reward gating (Phase 4A.4)
+   */
+  async submitLesson(req, res, next) {
+    try {
+      const { error, value } = submitLessonSchema.validate(req.body, {
+        abortEarly: false,
+        stripUnknown: true,
+      });
+
+      if (error) {
+        const errors = error.details.map((d) => ({
+          field: d.path.join('.'),
+          message: d.message,
+        }));
+        return ApiResponse.badRequest(res, 'Validation failed', errors);
+      }
+
+      const result = await progressService.submitLesson(req.user.id, value);
+
+      return ApiResponse.success(res, {
+        data: result,
+        message: result.passed ? 'Lesson completed successfully' : 'Lesson failed',
       });
     } catch (err) {
       if (err.statusCode) {

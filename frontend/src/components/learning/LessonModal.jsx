@@ -29,7 +29,13 @@ export default function LessonModal({
   unit = null,
   onClose,
   onComplete,
+  onStartAttempt,
+  onSubmitAttempt,
+  isAuthenticated = false,
 }) {
+  const startLessonAttempt = onStartAttempt;
+  const submitLessonAttempt = onSubmitAttempt;
+
   // ─── Transient State Machine ────────────────────────────────────────────────
   const [step, setStep] = useState('intro'); // 'intro' | 'flashcards' | 'quiz' | 'result'
   const [flashcardIndex, setFlashcardIndex] = useState(0);
@@ -39,11 +45,14 @@ export default function LessonModal({
   const [answers, setAnswers] = useState([]);
   const [score, setScore] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [attemptId, setAttemptId] = useState(null);
+  const [serverQuestions, setServerQuestions] = useState(null);
+  const [serverResults, setServerResults] = useState(null);
 
   // Safely retrieve authoritative curriculum content
   const lessonData = unit && questId ? getLessonContent(questId, unit.id) : null;
   const vocabulary = lessonData?.vocabulary || [];
-  const questions = lessonData?.questions || [];
+  const questions = (serverQuestions && serverQuestions.length > 0) ? serverQuestions : (lessonData?.questions || []);
 
   // Reset transient lesson state whenever modal opens or unit changes
   const resetLessonState = useCallback(() => {
@@ -55,13 +64,24 @@ export default function LessonModal({
     setAnswers([]);
     setScore(0);
     setIsSubmitting(false);
+    setServerResults(null);
   }, []);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && unit) {
       resetLessonState();
+      if (isAuthenticated) {
+        startLessonAttempt(questId, unit.id).then((res) => {
+          if (res?.success && res.attemptId) {
+            setAttemptId(res.attemptId);
+            if (Array.isArray(res.questions) && res.questions.length > 0) {
+              setServerQuestions(res.questions);
+            }
+          }
+        });
+      }
     }
-  }, [isOpen, unit?.id, questId, resetLessonState]);
+  }, [isOpen, unit?.id, questId, isAuthenticated, resetLessonState, startLessonAttempt]);
 
   if (!isOpen) return null;
 
@@ -124,37 +144,74 @@ export default function LessonModal({
 
   // ─── Quiz Answer Selection Handler ──────────────────────────────────────────
   const handleSelectAnswer = (optionIdx) => {
-    if (isAnswerSubmitted) return; // Prevent rapid multi-clicks
-
     const currentQ = questions[quizIndex];
     if (!currentQ) return;
 
     setSelectedAnswer(optionIdx);
-    setIsAnswerSubmitted(true);
 
-    const isCorrect = optionIdx === currentQ.answer;
-    const recordedAnswer = {
-      questionId: currentQ.id,
-      selected: optionIdx,
-      correct: currentQ.answer,
-      isCorrect,
-    };
-
-    setAnswers((prev) => [...prev, recordedAnswer]);
+    // If local answer key is present (Guest local mode), provide instant feedback
+    if (currentQ.answer !== undefined) {
+      if (isAnswerSubmitted) return; // Prevent rapid multi-clicks
+      setIsAnswerSubmitted(true);
+      const isCorrect = optionIdx === currentQ.answer;
+      const recordedAnswer = {
+        questionId: currentQ.id,
+        selected: optionIdx,
+        correct: currentQ.answer,
+        isCorrect,
+      };
+      setAnswers((prev) => [...prev, recordedAnswer]);
+    }
   };
 
-  const handleNextQuestion = () => {
+  const handleNextQuestion = async () => {
+    const currentQ = questions[quizIndex];
+    const isServerMode = currentQ && currentQ.answer === undefined;
+
+    let updatedAnswers = answers;
+    if (isServerMode) {
+      if (selectedAnswer === null) return;
+      const recorded = { questionId: currentQ.id, selected: selectedAnswer };
+      updatedAnswers = [...answers, recorded];
+      setAnswers(updatedAnswers);
+    }
+
     if (quizIndex < questions.length - 1) {
       setQuizIndex((prev) => prev + 1);
       setSelectedAnswer(null);
       setIsAnswerSubmitted(false);
     } else {
       // Finalize quiz results
-      const totalQ = questions.length;
-      const correctAnswers = answers.filter((a) => a.isCorrect).length;
-      const calculatedScore = totalQ > 0 ? Math.round((correctAnswers / totalQ) * 100) : 0;
-      setScore(calculatedScore);
-      setStep('result');
+      if (isServerMode && attemptId) {
+        setIsSubmitting(true);
+        try {
+          const res = await submitLessonAttempt({
+            attemptId,
+            answers: updatedAnswers,
+            questId,
+            unitId: unit.id,
+          });
+
+          if (res?.success) {
+            setScore(res.score || 0);
+            if (res.results) {
+              setServerResults(res.results);
+            }
+          } else {
+            setScore(0);
+          }
+        } finally {
+          setIsSubmitting(false);
+          setStep('result');
+        }
+      } else {
+        // Guest local mode
+        const totalQ = questions.length;
+        const correctAnswers = updatedAnswers.filter((a) => a.isCorrect).length;
+        const calculatedScore = totalQ > 0 ? Math.round((correctAnswers / totalQ) * 100) : 0;
+        setScore(calculatedScore);
+        setStep('result');
+      }
     }
   };
 
@@ -168,6 +225,7 @@ export default function LessonModal({
           questId,
           unitId: unit.id,
           score,
+          attemptId,
         });
       }
       onClose();
@@ -176,9 +234,18 @@ export default function LessonModal({
     }
   };
 
-  // ─── Retry Handler (Resets transient state) ──────────────────────────────────
-  const handleRetry = () => {
+  // ─── Retry Handler (Creates a fresh attempt on retry) ───────────────────────
+  const handleRetry = async () => {
     resetLessonState();
+    if (isAuthenticated) {
+      const res = await startLessonAttempt(questId, unit.id);
+      if (res?.success && res.attemptId) {
+        setAttemptId(res.attemptId);
+        if (Array.isArray(res.questions) && res.questions.length > 0) {
+          setServerQuestions(res.questions);
+        }
+      }
+    }
     setStep('flashcards');
   };
 
@@ -386,8 +453,8 @@ export default function LessonModal({
               })}
             </div>
 
-            {/* Explanation and next button */}
-            {isAnswerSubmitted && (
+            {/* Explanation and next button (Guest local mode) */}
+            {isAnswerSubmitted && currentQ.answer !== undefined && (
               <div
                 style={{
                   ...styles.feedbackBox,
@@ -406,6 +473,27 @@ export default function LessonModal({
                     {quizIndex === questions.length - 1 ? 'Xem kết quả 🏆' : 'Câu tiếp theo ➜'}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* Server Mode Next / Submit Button (No leaked answer key) */}
+            {currentQ.answer === undefined && (
+              <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={handleNextQuestion}
+                  disabled={selectedAnswer === null || isSubmitting}
+                  style={{
+                    ...styles.btnPrimary,
+                    opacity: selectedAnswer === null || isSubmitting ? 0.5 : 1,
+                    cursor: selectedAnswer === null || isSubmitting ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {isSubmitting
+                    ? 'Đang chấm điểm...'
+                    : quizIndex === questions.length - 1
+                    ? 'Nộp bài & Xem kết quả 🏆'
+                    : 'Câu tiếp theo ➜'}
+                </button>
               </div>
             )}
           </div>
@@ -440,13 +528,41 @@ export default function LessonModal({
                 <div style={styles.scoreRow}>
                   <span style={styles.scoreLabel}>Số câu đúng:</span>
                   <span style={{ fontSize: 14, color: 'var(--t1)', fontWeight: 700 }}>
-                    {answers.filter((a) => a.isCorrect).length} / {questions.length} câu
+                    {serverResults
+                      ? `${serverResults.filter((a) => a.isCorrect).length} / ${questions.length} câu`
+                      : `${answers.filter((a) => a.isCorrect).length} / ${questions.length} câu`}
                   </span>
                 </div>
                 <div style={{ marginTop: 10 }}>
                   <Bar pct={score} color={isPassed ? 'var(--green)' : 'var(--red)'} height={8} glow={isPassed} />
                 </div>
               </div>
+
+              {/* Optional Question Breakdown from Server */}
+              {Array.isArray(serverResults) && serverResults.length > 0 && (
+                <div style={{ width: '100%', marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {serverResults.map((r, i) => (
+                    <div
+                      key={r.questionId || i}
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: 'var(--r-sm)',
+                        background: r.isCorrect ? 'rgba(16,185,129,.08)' : 'rgba(239,68,68,.08)',
+                        border: `1px solid ${r.isCorrect ? 'rgba(16,185,129,.25)' : 'rgba(239,68,68,.25)'}`,
+                        fontSize: 12,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <span style={{ color: 'var(--t1)', fontWeight: 600 }}>Câu {i + 1}</span>
+                      <span style={{ color: r.isCorrect ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>
+                        {r.isCorrect ? '✓ Đúng' : '✕ Chưa đúng'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div style={styles.footer}>

@@ -250,8 +250,62 @@ export const useProgressStore = create(
         }
       },
 
+      // ─── 0.2 SERVER-VERIFIED LESSON ATTEMPTS (PHASE 4A.4) ────────────
+      startLessonAttempt: async (questId, unitId) => {
+        const authState = useAuthStore.getState();
+        if (!authState.isAuthenticated) {
+          return { isGuest: true };
+        }
+
+        try {
+          const res = await progressApi.startLesson({ questId, unitId });
+          const payload = res?.data || res;
+          return { success: true, isGuest: false, ...payload };
+        } catch (err) {
+          console.error('Lỗi khi khởi tạo bài học từ máy chủ:', err);
+          return { success: false, isGuest: false, error: err };
+        }
+      },
+
+      submitLessonAttempt: async ({ attemptId, answers, questId, unitId, idempotencyKey = null }) => {
+        const authState = useAuthStore.getState();
+        if (!authState.isAuthenticated) {
+          return { isGuest: true };
+        }
+
+        try {
+          const res = await progressApi.submitLesson({ attemptId, answers, idempotencyKey });
+          const payload = res?.data || res;
+
+          if (payload?.passed) {
+            if (payload?.profile) {
+              get().applyServerProfile(payload.profile);
+            }
+
+            const reward = payload?.reward || {};
+            if (!reward.alreadyCompleted) {
+              const earnedXp = reward.xp || 60;
+              const earnedWords = reward.wordsLearned || 15;
+              toast.success(`⚔️ Vượt qua Unit ${unitId}! (+${earnedXp} XP, +${earnedWords} từ mới)`);
+
+              if (reward.missionBonus?.completed?.length) {
+                reward.missionBonus.completed.forEach((title) => {
+                  toast.success(`🎖️ Hoàn thành nhiệm vụ: "${title}"! (+${reward.missionBonus.xp} XP)`, { duration: 3500 });
+                });
+              }
+            }
+          }
+
+          return { success: true, isGuest: false, ...payload };
+        } catch (err) {
+          console.error('Lỗi khi nộp bài học lên máy chủ:', err);
+          toast.error(err.message || 'Không thể gửi kết quả bài học. Vui lòng thử lại!');
+          return { success: false, isGuest: false, error: err };
+        }
+      },
+
       // ─── 1. HOÀN THÀNH BÀI HỌC TRONG LỘ TRÌNH ──────────────────────
-      completeUnitLesson: async (questId, unitId, customKey = null) => {
+      completeUnitLesson: async (questId, unitId, attemptId = null, customKey = null) => {
         const unitKey = `${questId}-${unitId}`;
         if (inProgressUnits.has(unitKey)) {
           return { success: false, inProgress: true };
@@ -279,6 +333,7 @@ export const useProgressStore = create(
                 action: 'COMPLETE_UNIT',
                 questId,
                 unitId,
+                attemptId,
                 idempotencyKey,
               });
 
