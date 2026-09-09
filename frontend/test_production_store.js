@@ -376,6 +376,87 @@ async function runProductionTests() {
     assert(s.gold === 120 + 7, "Post-reload Gold is 127");
   }
 
+  console.log("\n--- TEST P.1: Guest Equipment Management (Max 2 rule) ---");
+  {
+    resetStore({ ownedItemIds: [1, 2, 4], equippedIds: [] });
+
+    // P1.1: Cannot equip unowned item
+    const unownedRes = await useProgressStore.getState().toggleEquip(3);
+    assert(unownedRes.success === false && unownedRes.notOwned === true, "Guest cannot equip unowned item");
+    assert(useProgressStore.getState().equippedIds.length === 0, "equippedIds remains empty");
+
+    // P1.2: Equip item 1
+    const eq1 = await useProgressStore.getState().toggleEquip(1);
+    assert(eq1.success === true && eq1.equipped === true, "Guest equipped item 1");
+    assert(useProgressStore.getState().equippedIds.includes(1), "Store equippedIds contains 1");
+
+    // P1.3: Equip item 2
+    const eq2 = await useProgressStore.getState().toggleEquip(2);
+    assert(eq2.success === true && eq2.equipped === true, "Guest equipped item 2");
+    assert(useProgressStore.getState().equippedIds.length === 2, "Store equippedIds has 2 items");
+
+    // P1.4: 3rd item blocked by max-2 rule
+    const eq3 = await useProgressStore.getState().toggleEquip(4);
+    assert(eq3.success === false && eq3.maxReached === true, "Guest equipping 3rd item blocked by max-2 rule");
+    assert(useProgressStore.getState().equippedIds.length === 2, "Store equippedIds remains 2");
+
+    // P1.5: Unequip item 1
+    const un1 = await useProgressStore.getState().toggleEquip(1);
+    assert(un1.success === true && un1.equipped === false, "Guest unequipped item 1");
+    assert(!useProgressStore.getState().equippedIds.includes(1), "Store equippedIds no longer contains 1");
+    assert(useProgressStore.getState().equippedIds.length === 1, "Store equippedIds has exactly 1 item remaining");
+  }
+
+  console.log("\n--- TEST P.2: Authenticated Server-Authoritative Equipment Flow ---");
+  {
+    resetStore({ ownedItemIds: [1, 2], equippedIds: [] });
+    useAuthStore.getState().setAuth({ id: 'user-auth-equip' }, 'token-equip', 'refresh-equip');
+
+    const originalPost = axiosClient.post;
+    let postedPayload = null;
+
+    axiosClient.post = async (url, payload) => {
+      postedPayload = payload;
+      return {
+        data: {
+          success: true,
+          reward: { equipped: true, itemId: payload.itemId, equippedIds: [payload.itemId] },
+          profile: {
+            userId: 'user-auth-equip',
+            totalXp: 100,
+            currentLevel: 1,
+            gold: 500,
+            ownedItemIds: ['1', '2'],
+            equippedIds: [payload.itemId],
+          },
+        },
+      };
+    };
+
+    try {
+      // P2.1: Call toggleEquip(1)
+      const res = await useProgressStore.getState().toggleEquip(1);
+      assert(res.success === true, "Authenticated toggleEquip succeeded");
+      assert(postedPayload.action === "EQUIP_ITEM", "Action sent to backend is EQUIP_ITEM");
+      assert(postedPayload.itemId === "1", "itemId correctly sent as string");
+      assert(postedPayload.equippedIds === undefined, "equippedIds array NOT sent in request body");
+      assert(useProgressStore.getState().equippedIds.includes(1), "Store hydrated from authoritative server profile");
+
+      // P2.2: Server failure preserves state without optimistic corruption
+      axiosClient.post = async () => {
+        throw new Error('500 Server Error');
+      };
+
+      const failRes = await useProgressStore.getState().toggleEquip(2);
+      assert(failRes.success === false, "Failed equip returns failure");
+      assert(!useProgressStore.getState().equippedIds.includes(2), "Store NOT optimistically modified on failure");
+      assert(useProgressStore.getState().equippedIds.includes(1), "Existing equipment intact");
+    } finally {
+      axiosClient.post = originalPost;
+      resetStore();
+    }
+  }
+
   console.log(`\n======================================================`);
   console.log(`PRODUCTION TEST RESULTS: ${passed} PASSED, ${failed} FAILED`);
   console.log(`======================================================\n`);

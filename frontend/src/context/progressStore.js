@@ -87,6 +87,7 @@ export const INITIAL_MISSIONS = [
 let pendingScorePromise = Promise.resolve();
 const inProgressUnits = new Set();
 const inProgressWords = new Set();
+const inProgressEquip = new Set();
 
 export const useProgressStore = create(
   persist(
@@ -640,19 +641,81 @@ export const useProgressStore = create(
         return true;
       },
 
-      toggleEquip: (id) => {
-        set((state) => {
-          if (!state.ownedItemIds.some((itemKey) => String(itemKey) === String(id))) {
-            toast.error('Bạn cần mua vật phẩm này trước khi trang bị!');
-            return state;
-          }
-          const isEquipped = state.equippedIds.some((itemKey) => String(itemKey) === String(id));
-          const newEquipped = isEquipped
-            ? state.equippedIds.filter((itemKey) => String(itemKey) !== String(id))
-            : [...state.equippedIds, id];
+      toggleEquip: async (id, customKey = null) => {
+        const itemId = String(id);
+        const state = get();
 
-          return { equippedIds: newEquipped };
-        });
+        if (!state.ownedItemIds.some((itemKey) => String(itemKey) === itemId)) {
+          toast.error('Bạn cần mua vật phẩm này trước khi trang bị!');
+          return { success: false, notOwned: true };
+        }
+
+        const authState = useAuthStore.getState();
+        const isAuthenticated = authState.isAuthenticated;
+
+        // AUTHENTICATED: Server-authoritative action qua POST /progress/action
+        if (isAuthenticated) {
+          if (inProgressEquip.has(itemId)) {
+            return { success: false, inProgress: true };
+          }
+
+          inProgressEquip.add(itemId);
+          try {
+            const idempotencyKey =
+              customKey ||
+              (typeof crypto !== 'undefined' && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `equip_${itemId}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`);
+
+            const res = await progressApi.executeAction({
+              action: 'EQUIP_ITEM',
+              itemId,
+              idempotencyKey,
+            });
+
+            const payload = res?.data || res;
+            if (payload?.profile) {
+              get().applyServerProfile(payload.profile);
+            }
+
+            const isNowEquipped =
+              payload?.reward?.equipped ??
+              payload?.equipped ??
+              (payload?.profile?.equippedIds || []).some((k) => String(k) === itemId);
+
+            if (isNowEquipped) {
+              toast.success('⚔️ Đã trang bị vật phẩm thành công!');
+            } else {
+              toast('🛡️ Đã gỡ trang bị vật phẩm.');
+            }
+
+            return { success: true, equipped: isNowEquipped, profile: payload?.profile };
+          } catch (err) {
+            console.error('Lỗi khi trang bị vật phẩm:', err);
+            toast.error(err.message || 'Không thể cập nhật trang bị!');
+            return { success: false, error: err };
+          } finally {
+            inProgressEquip.delete(itemId);
+          }
+        }
+
+        // GUEST: Cập nhật cục bộ với quy tắc tối đa 2 vật phẩm
+        const isEquipped = state.equippedIds.some((itemKey) => String(itemKey) === itemId);
+        if (isEquipped) {
+          const newEquipped = state.equippedIds.filter((itemKey) => String(itemKey) !== itemId);
+          set({ equippedIds: newEquipped });
+          toast('🛡️ Đã gỡ trang bị vật phẩm.');
+          return { success: true, equipped: false };
+        } else {
+          if (state.equippedIds.length >= 2) {
+            toast.error('Chỉ có thể trang bị tối đa 2 vật phẩm cùng lúc!');
+            return { success: false, maxReached: true };
+          }
+          const newEquipped = [...state.equippedIds, isNaN(Number(id)) ? id : Number(id)];
+          set({ equippedIds: newEquipped });
+          toast.success('⚔️ Đã trang bị vật phẩm!');
+          return { success: true, equipped: true };
+        }
       },
 
       // Chọn Quest trên bản đồ
