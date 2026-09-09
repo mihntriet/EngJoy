@@ -7,6 +7,7 @@ import Chip from '../components/common/Chip';
 import Bar from '../components/common/Bar';
 import SHead from '../components/common/SHead';
 import LoLIcon from '../components/common/LoLIcon';
+import LessonModal from '../components/learning/LessonModal';
 
 export default function Learning() {
   const {
@@ -19,29 +20,53 @@ export default function Learning() {
 
   const [open, setOpen] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  // ─── Lesson Modal State ─────────────────────────────────────────────────────
+  const [activeLesson, setActiveLesson] = useState(null); // unit object or null
   const sel = activeQuestIndex ?? 0;
   const q = quests[sel] || quests[0];
   const units = questUnits[q.id] || [];
 
-  const handleStartLesson = async (unit) => {
-    if (submitting) return;
-    if (unit.status === "done") {
-      setOpen(null);
-      return;
+  // ─── Open Lesson Modal (replaces old direct-completion handler) ──────────────
+  const handleStartLesson = (unit) => {
+    if (submitting || activeLesson) return; // Prevent double-open
+    // Both active and done units can open the lesson modal
+    // (done = review mode, active = first attempt)
+    if (unit.status === "active" || unit.status === "done") {
+      setActiveLesson(unit);
     }
-    if (unit.status === "active") {
-      setSubmitting(true);
-      try {
-        await completeUnitLesson(q.id, unit.id);
-      } finally {
-        setSubmitting(false);
-        setOpen(null);
-      }
+  };
+
+  // ─── Lesson Completion Callback (only called on score >= 60) ─────────────────
+  const handleLessonComplete = async ({ questId, unitId, score }) => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await completeUnitLesson(questId, unitId);
+    } finally {
+      setSubmitting(false);
+      setActiveLesson(null);
+      setOpen(null);
+    }
+  };
+
+  // ─── Close Lesson Modal (no reward) ──────────────────────────────────────────
+  const handleLessonClose = () => {
+    if (!submitting) {
+      setActiveLesson(null);
     }
   };
 
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+      {/* ─── Lesson Modal (rendered globally within Learning page) ──────── */}
+      <LessonModal
+        isOpen={!!activeLesson}
+        questId={q.id}
+        unit={activeLesson}
+        onClose={handleLessonClose}
+        onComplete={handleLessonComplete}
+      />
+
       {/* Level sidebar */}
       <div
         style={{
@@ -314,6 +339,7 @@ export default function Learning() {
                   >
                     <button
                       onClick={() => handleStartLesson(unit)}
+                      disabled={submitting || !!activeLesson}
                       style={{
                         flex: 1,
                         padding: "10px",
@@ -323,17 +349,18 @@ export default function Learning() {
                         color: isDone ? "var(--t1)" : "#fff",
                         fontWeight: 700,
                         fontSize: 13,
-                        cursor: "pointer",
+                        cursor: (submitting || !!activeLesson) ? "not-allowed" : "pointer",
                         fontFamily: "'Nunito',sans-serif",
                         boxShadow: isDone ? "none" : "0 4px 12px rgba(99,102,241,.3)",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
                         gap: 6,
+                        opacity: (submitting || !!activeLesson) ? 0.6 : 1,
                       }}
                     >
                       <LoLIcon src={LOL_ICONS.battle} size={16} />
-                      {isDone ? "Ôn lại bài học" : "Bắt đầu chiến (+60 XP)"}
+                      {isDone ? "Ôn lại bài học" : "Bắt đầu chiến"}
                     </button>
                     <button
                       onClick={() => alert(`Từ vựng Unit ${unit.id}: ${unit.words} từ vựng đã sẵn sàng trong Codex.`)}

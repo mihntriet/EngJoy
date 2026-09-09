@@ -5,6 +5,7 @@ import { useAuthStore } from './context/authStore';
 import { useProgressStore, calculateLevelInfo } from './context/progressStore';
 import Sidebar from './components/layout/Sidebar';
 import Header from './components/layout/Header';
+import MigrationConflictBanner from './components/common/MigrationConflictBanner';
 import JoyBubble from './components/chat/JoyBubble';
 import Dashboard from './pages/Dashboard';
 import Learning from './pages/Learning';
@@ -207,6 +208,9 @@ function MainApp() {
           onViewChange={handleNav}
           onToggleMobile={() => setMobileOpen(!mobileOpen)}
         />
+
+        {/* Global Migration Conflict Banner (Phase 2C.4D) */}
+        <MigrationConflictBanner />
 
         <div style={{ flex: 1, overflow: "hidden" }}>
           {view === "home" && (
