@@ -1,14 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { NAV_ITEMS, LOL_ICONS } from '../../constants/gameData';
 import { useAuthStore } from '../../context/authStore';
+import { useProgressStore } from '../../context/progressStore';
 import ChampPortrait from '../common/ChampPortrait';
 import LoLIcon from '../common/LoLIcon';
 
 export default function Header({ view, user, onViewChange, onToggleMobile }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user: authUser, isAuthenticated, logout } = useAuthStore();
+  const guestXp = useProgressStore((state) => state.xp || 0);
+  const hasGuestProgress = !isAuthenticated && guestXp > 0;
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -57,7 +61,7 @@ export default function Header({ view, user, onViewChange, onToggleMobile }) {
           style={{
             background: "rgba(255, 255, 255, 0.05)",
             border: "1px solid var(--bd)",
-            borderRadius: "var(--r-sm)",
+            borderRadius: 0,
             color: "var(--t1)",
             padding: "6px 10px",
             cursor: "pointer",
@@ -87,17 +91,19 @@ export default function Header({ view, user, onViewChange, onToggleMobile }) {
         </h1>
       </div>
 
-      {/* Subtle Search Bar */}
-      <div
-        className="mobile-hide"
+      {/* QA FIX 1: Codex owns its search surface; keep the global search on other routes. */}
+      {location.pathname !== '/codex' && <div
+        className="mobile-hide rpg-header-search"
         style={{
           flex: 1,
           display: "flex",
           alignItems: "center",
           gap: 10,
           background: "var(--bg-card)",
-          border: "1px solid var(--bd-subtle)",
-          borderRadius: "var(--r)",
+          border: "1px solid rgba(103,232,249,.18)",
+          borderBottom: "2px solid rgba(34,211,238,.5)",
+          borderRadius: 0,
+          boxShadow: "inset 0 -5px 14px rgba(6,182,212,.07)",
           padding: "0 14px",
           height: 36,
           maxWidth: 320,
@@ -120,7 +126,7 @@ export default function Header({ view, user, onViewChange, onToggleMobile }) {
             width: "100%",
           }}
         />
-      </div>
+      </div>}
 
       {/* Right Stats Pills (Streak, XP, Gold) & Auth Section */}
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
@@ -196,7 +202,7 @@ export default function Header({ view, user, onViewChange, onToggleMobile }) {
                 padding: "3px 6px 3px 3px",
                 background: dropdownOpen ? "var(--bg-card-hover)" : "var(--bg-card)",
                 border: "1px solid var(--bd)",
-                borderRadius: "var(--r)",
+                borderRadius: 0,
                 cursor: "pointer",
                 transition: "all .15s",
               }}
@@ -231,7 +237,7 @@ export default function Header({ view, user, onViewChange, onToggleMobile }) {
                   width: 220,
                   background: "var(--bg-surface)",
                   border: "1px solid var(--bd2)",
-                  borderRadius: "var(--r-lg)",
+                  borderRadius: 0,
                   boxShadow: "var(--sh-lg)",
                   padding: "8px",
                   zIndex: 100,
@@ -296,7 +302,7 @@ export default function Header({ view, user, onViewChange, onToggleMobile }) {
                 fontWeight: 700,
                 color: "var(--t2)",
                 padding: "6px 12px",
-                borderRadius: "var(--r-sm)",
+                borderRadius: 0,
                 textDecoration: "none",
                 transition: "all .15s",
               }}
@@ -310,11 +316,11 @@ export default function Header({ view, user, onViewChange, onToggleMobile }) {
                 fontSize: 12.5,
                 fontWeight: 800,
                 padding: "6px 14px",
-                borderRadius: "var(--r-sm)",
+                borderRadius: 0,
                 textDecoration: "none",
               }}
             >
-              Đăng ký
+              {hasGuestProgress ? 'Lưu Tiến Trình' : 'Đăng ký'}
             </Link>
           </div>
         )}

@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ARENA_GAMES, QUIZ_Q, splash } from '../constants/gameData';
+import { ARENA_GAMES, INITIAL_ITEMS, QUIZ_Q, splash } from '../constants/gameData';
 import { useProgressStore } from '../context/progressStore';
 import Card from '../components/common/Card';
 import Chip from '../components/common/Chip';
+import ItemIcon from '../components/common/ItemIcon';
 
 export default function Arena() {
   const [active, setActive] = useState(null);
@@ -12,11 +13,74 @@ export default function Arena() {
   const [done, setDone] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [time, setTime] = useState(15);
+  const [streak, setStreak] = useState(0);
+  const [damage, setDamage] = useState(null);
+  const [combatBanner, setCombatBanner] = useState(null);
+  const [shieldActive, setShieldActive] = useState(false);
+  const [timeFrozen, setTimeFrozen] = useState(false);
+  const [eliminated, setEliminated] = useState([]);
+  const [usedSpells, setUsedSpells] = useState([]);
+  const [equipmentInventory, setEquipmentInventory] = useState([]);
+  const [usedEquipmentThisQuestion, setUsedEquipmentThisQuestion] = useState([]);
   const timerRef = useRef(null);
   const quizKeyRef = useRef(null);
+  const gold = useProgressStore((state) => state.gold || 0);
+  const equippedIds = useProgressStore((state) => state.equippedIds || []);
+  const equippedItems = INITIAL_ITEMS.filter((item) => equipmentInventory.includes(String(item.id)));
 
   useEffect(() => {
-    if (active === "quiz" && picked === null && !done) {
+    setEquipmentInventory((current) => {
+      const equippedKeys = equippedIds.map((id) => String(id));
+      if (!current.length && equippedKeys.length) return equippedKeys;
+      return current.filter((id) => equippedKeys.includes(id));
+    });
+  }, [equippedIds]);
+
+  useEffect(() => {
+    // Question-scoped effects never leak into the next question.
+    setUsedEquipmentThisQuestion([]);
+    setShieldActive(false);
+    setEliminated([]);
+    setTimeFrozen(false);
+  }, [qIdx]);
+
+  function useEquipment(item) {
+    const itemKey = String(item.id);
+    if (!equipmentInventory.includes(itemKey) || usedEquipmentThisQuestion.includes(itemKey)) return;
+    setUsedEquipmentThisQuestion((current) => [...current, itemKey]);
+    // A consumed item disappears for the remainder of this quiz session.
+    setEquipmentInventory((current) => current.filter((id) => id !== itemKey));
+    if (item.id === 1) setShieldActive(true);
+    if (item.id === 2) {
+      const incorrect = QUIZ_Q[qIdx].opts.map((_, index) => index).filter((index) => index !== QUIZ_Q[qIdx].ans);
+      setEliminated(incorrect.slice(0, 2));
+    }
+    if (item.id === 6) {
+      setTimeFrozen(true);
+      setTimeout(() => setTimeFrozen(false), 5000);
+    }
+  }
+
+  function useSpell(spell) {
+    const cost = 20;
+    if (gold < cost) return;
+    // The current progression store has no spendGold action. Keep this UI gated
+    // until that server-authoritative action exists; never mutate Gold locally.
+    if (usedSpells.includes(spell)) return;
+    setUsedSpells((current) => [...current, spell]);
+    if (spell === "purge") {
+      const incorrect = QUIZ_Q[qIdx].opts.map((_, index) => index).filter((index) => index !== QUIZ_Q[qIdx].ans);
+      setEliminated(incorrect.slice(0, 2));
+    }
+    if (spell === "warp") {
+      setTimeFrozen(true);
+      setTimeout(() => setTimeFrozen(false), 5000);
+    }
+    if (spell === "shield") setShieldActive(true);
+  }
+
+  useEffect(() => {
+    if (active === "quiz" && picked === null && !done && !timeFrozen) {
       timerRef.current = setInterval(() => {
         setTime((t) => {
           if (t <= 1) {
@@ -38,7 +102,22 @@ export default function Arena() {
     setPicked(idx);
     const correct = idx === QUIZ_Q[qIdx].ans;
     const finalScore = correct ? score + 1 : score;
-    if (correct) setScore((s) => s + 1);
+    if (correct) {
+      setScore((s) => s + 1);
+      setStreak((current) => {
+        const next = current + 1;
+        if (next >= 3) setCombatBanner("RAMPAGE!");
+        else if (next === 2) setCombatBanner("DOUBLE KILL!");
+        setTimeout(() => setCombatBanner(null), 1100);
+        return next;
+      });
+      setDamage(`-${Math.round(100 / QUIZ_Q.length)} HP!`);
+      setTimeout(() => setDamage(null), 900);
+    } else if (shieldActive) {
+      setShieldActive(false);
+    } else {
+      setStreak(0);
+    }
 
     setTimeout(() => {
       if (qIdx + 1 >= QUIZ_Q.length) {
@@ -70,6 +149,14 @@ export default function Arena() {
     setDone(false);
     setSubmitted(false);
     setTime(15);
+    setStreak(0);
+    setDamage(null);
+    setCombatBanner(null);
+    setShieldActive(false);
+    setTimeFrozen(false);
+    setEliminated([]);
+    setUsedSpells([]);
+    setEquipmentInventory(equippedIds.map((id) => String(id)));
     quizKeyRef.current = null;
   }
 
@@ -80,6 +167,14 @@ export default function Arena() {
     setDone(false);
     setSubmitted(false);
     setTime(15);
+    setStreak(0);
+    setDamage(null);
+    setCombatBanner(null);
+    setShieldActive(false);
+    setTimeFrozen(false);
+    setEliminated([]);
+    setUsedSpells([]);
+    setEquipmentInventory(equippedIds.map((id) => String(id)));
     quizKeyRef.current = null;
   }
 
@@ -154,6 +249,7 @@ export default function Arena() {
     const q = QUIZ_Q[qIdx];
     return (
       <div
+        className="quiz-dungeon-frame"
         style={{
           display: "flex",
           alignItems: "center",
@@ -162,7 +258,11 @@ export default function Arena() {
           padding: 28,
         }}
       >
-        <div style={{ width: "100%", maxWidth: 520 }}>
+        <div className="quiz-dungeon-content" style={{ width: "100%", maxWidth: 520 }}>
+          <div className="quiz-boss-hud"><div className="quiz-boss-portrait">☠</div><div className="quiz-boss-info"><span>THE WORD WARDEN</span><strong>BOSS GUARDIAN · {QUIZ_Q.length} PHASES</strong><div className="quiz-boss-hp">{QUIZ_Q.map((_, index) => <i key={index} className={index < qIdx ? "is-destroyed" : index === qIdx ? "is-active" : ""} />)}</div></div><span className="quiz-boss-hp-label">{Math.max(0, QUIZ_Q.length - qIdx)} HP</span></div>
+          {damage && <span className="quiz-damage-float">{damage}</span>}
+          {combatBanner && <div className="quiz-streak-banner">{combatBanner}</div>}
+          <div className="quiz-equipment-hud"><span>ARMORY LINK · STREAK {streak}</span><div className="quiz-equipped-items">{equippedItems.length ? equippedItems.map((item) => <button type="button" className="quiz-equipped-item" key={item.id} disabled={usedEquipmentThisQuestion.includes(String(item.id))} onClick={() => useEquipment(item)} title={`Use ${item.name} — ${item.effect}`}><ItemIcon id={item.lolItem} size={18} /><b>{item.name}</b><small>{item.effect}</small></button>) : <strong>NO ARTIFACTS EQUIPPED</strong>}</div></div>
           <div
             style={{
               display: "flex",
@@ -268,8 +368,9 @@ export default function Arena() {
               return (
                 <button
                   key={i}
-                  onClick={() => picked === null && advance(i)}
-                  disabled={picked !== null}
+                  onClick={() => picked === null && !eliminated.includes(i) && advance(i)}
+                  disabled={picked !== null || eliminated.includes(i)}
+                  className={eliminated.includes(i) ? "quiz-option-eliminated" : ""}
                   style={{
                     padding: "16px 14px",
                     background: bg,
@@ -290,6 +391,7 @@ export default function Arena() {
               );
             })}
           </div>
+          <div className="quiz-spell-tray"><SpellButton label="PURGE" icon="◈" cost={20} disabled={gold < 20 || picked !== null || usedSpells.includes("purge")} onClick={() => useSpell("purge")} active={eliminated.length > 0} /><SpellButton label={timeFrozen ? "FROZEN" : "TIME WARP"} icon="◌" cost={20} disabled={gold < 20 || picked !== null || timeFrozen || usedSpells.includes("warp")} onClick={() => useSpell("warp")} active={timeFrozen} /><SpellButton label={shieldActive ? "SHIELD ON" : "SHIELD"} icon="◇" cost={20} disabled={gold < 20 || picked !== null || shieldActive || usedSpells.includes("shield")} onClick={() => useSpell("shield")} active={shieldActive} /></div>
         </div>
       </div>
     );
@@ -313,23 +415,29 @@ export default function Arena() {
         Chọn trận đấu để tích XP và leo bảng xếp hạng
       </p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
+      <div className="arena-bento-grid">
         {ARENA_GAMES.map((game) => (
           <div
             key={game.id}
-            onClick={() => setActive(game.id)}
+            className={`arena-mode-card ${game.id === "quiz" ? "arena-featured arena-puzzle" : game.id === "battle" ? "arena-combat" : "arena-puzzle is-locked"}`}
+            onClick={game.id === "quiz" ? () => setActive(game.id) : undefined}
+            role={game.id === "quiz" ? "button" : undefined}
+            tabIndex={game.id === "quiz" ? 0 : undefined}
+            aria-disabled={game.id !== "quiz"}
+            onKeyDown={game.id === "quiz" ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setActive(game.id); } } : undefined}
             style={{
               background: "var(--s1)",
               border: "1px solid var(--bd)",
-              borderRadius: "var(--r-xl)",
+              borderRadius: 0,
               overflow: "hidden",
-              cursor: "pointer",
+              cursor: game.id === "quiz" ? "pointer" : "default",
               position: "relative",
               transition: "all .15s",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = "rgba(99,102,241,.4)";
-              e.currentTarget.style.boxShadow = "0 0 20px rgba(99,102,241,.12)";
+              if (game.id !== "quiz") return;
+              e.currentTarget.style.borderColor = game.id === "battle" ? "rgba(239,68,68,.7)" : "rgba(34,211,238,.7)";
+              e.currentTarget.style.boxShadow = game.id === "battle" ? "0 0 20px rgba(239,68,68,.4)" : "0 0 20px rgba(34,211,238,.4)";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.borderColor = "var(--bd)";
@@ -337,10 +445,11 @@ export default function Arena() {
             }}
           >
             {/* Champion splash as card background */}
-            <div style={{ height: 100, position: "relative", overflow: "hidden" }}>
+            <div className="arena-mode-art" style={{ height: 100, position: "relative", overflow: "hidden" }}>
               <img
                 src={splash(game.champion)}
                 alt={game.name}
+                className="arena-mode-image"
                 style={{
                   width: "100%",
                   height: "100%",
@@ -356,13 +465,14 @@ export default function Arena() {
                   background: "linear-gradient(to bottom, rgba(13,17,23,.3), rgba(13,17,23,.85))",
                 }}
               />
-              {game.hot && (
+              {game.id === "quiz" && (
                 <div style={{ position: "absolute", top: 10, right: 10 }}>
                   <Chip color="#ef4444" bg="var(--red-d)">
                     HOT
                   </Chip>
                 </div>
               )}
+              {game.id !== "quiz" && <div className="arena-lock-overlay"><span>🔒</span><strong>SẮP MỞ</strong><small>COMING SOON</small></div>}
             </div>
             <div style={{ padding: "14px 18px" }}>
               <div
@@ -386,9 +496,14 @@ export default function Arena() {
                 </Chip>
               </div>
             </div>
+            {game.id === "quiz" && <span className="arena-play-cta">VÀO TRẬN ↗</span>}
           </div>
         ))}
       </div>
     </div>
   );
+}
+
+function SpellButton({ label, icon, cost, disabled, onClick, active }) {
+  return <button type="button" className={`quiz-spell ${active ? 'is-active' : ''}`} disabled={disabled} onClick={onClick}><span>{icon}</span><strong>{label}</strong><small>{cost} GOLD</small></button>;
 }

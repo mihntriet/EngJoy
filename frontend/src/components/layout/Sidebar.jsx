@@ -182,10 +182,11 @@ export default function Sidebar({ view, onViewChange, user, mobileOpen, onCloseM
                 alignItems: "center",
                 gap: 12,
                 padding: "11px 14px",
-                borderRadius: "var(--r)",
-                border: "none",
+                borderRadius: 0,
+                border: isActive ? "1px solid rgba(34,211,238,.16)" : "1px solid transparent",
+                borderLeft: isActive ? "4px solid #22d3ee" : "4px solid transparent",
                 background: isActive
-                  ? "linear-gradient(90deg, rgba(99,102,241,.18) 0%, rgba(99,102,241,.06) 100%)"
+                  ? "linear-gradient(90deg, rgba(8,145,178,.32) 0%, rgba(8,47,73,.08) 100%)"
                   : "transparent",
                 color: isActive ? "#ffffff" : "var(--t2)",
                 fontWeight: isActive ? 800 : 600,
@@ -197,7 +198,7 @@ export default function Sidebar({ view, onViewChange, user, mobileOpen, onCloseM
               }}
               onMouseEnter={(e) => {
                 if (!isActive) {
-                  e.currentTarget.style.background = "var(--bg-card-hover)";
+                  e.currentTarget.style.background = "linear-gradient(90deg, rgba(8,145,178,.16), rgba(8,47,73,.03))";
                   e.currentTarget.style.color = "var(--t1)";
                 }
               }}
@@ -228,7 +229,7 @@ export default function Sidebar({ view, onViewChange, user, mobileOpen, onCloseM
                 style={{
                   width: 24,
                   height: 24,
-                  borderRadius: 6,
+                  borderRadius: 0,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
