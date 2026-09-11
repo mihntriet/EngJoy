@@ -93,7 +93,7 @@ export default function Register() {
       console.warn('Backend register failed, fallback offer available:', err);
       const msg = err?.message || err?.error || 'Đăng ký thất bại';
       toast.error(
-        `${msg}. Bạn có thể dùng chế độ 'Tài khoản Demo' để trải nghiệm ngay!`
+        `${msg}. Bạn có thể trải nghiệm ngay ở chế độ Khách.`
       );
     } finally {
       setLoading(false);
@@ -101,19 +101,7 @@ export default function Register() {
   };
 
   const handleDemoRegister = () => {
-    const demoUser = {
-      id: `demo-${Date.now()}`,
-      email: email.trim() || 'hiepsi@engjoy.edu.vn',
-      displayName: displayName.trim() || 'Tân Hiệp Sĩ',
-      role: 'student',
-      champion: selectedChamp,
-      level: 1,
-      streak: 0,
-      xp: 0,
-      gold: 0,
-    };
-    setAuth(demoUser, 'mock-access-token-demo', 'mock-refresh-token-demo');
-    toast.success(`Khởi tạo tân thủ thành công với tướng ${selectedChamp}!`);
+    toast.success(`Bạn đang trải nghiệm ở chế độ Khách với tướng ${selectedChamp}.`);
     navigate('/');
   };
 
@@ -171,7 +159,7 @@ export default function Register() {
           border: '1px solid var(--bd2)',
           borderRadius: '24px',
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(350px, 100%), 1fr))',
           boxShadow: '0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)',
           overflow: 'hidden',
           position: 'relative',

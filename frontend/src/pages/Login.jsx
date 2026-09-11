@@ -74,7 +74,7 @@ export default function Login() {
       console.warn('Backend login failed, fallback offer available:', err);
       const msg = err?.message || err?.error || 'Đăng nhập thất bại';
       toast.error(
-        `${msg}. Bạn có thể dùng chế độ 'Tài khoản Demo' để trải nghiệm ngay!`
+        `${msg}. Bạn có thể trải nghiệm ngay ở chế độ Khách.`
       );
     } finally {
       setLoading(false);
@@ -82,19 +82,7 @@ export default function Login() {
   };
 
   const handleDemoLogin = () => {
-    const demoUser = {
-      id: 'demo-user-1',
-      email: 'hiepsi@engjoy.edu.vn',
-      displayName: 'Tân Hiệp Sĩ',
-      role: 'student',
-      champion: 'Lux',
-      level: 1,
-      streak: 0,
-      xp: 0,
-      gold: 0,
-    };
-    setAuth(demoUser, 'mock-access-token-demo', 'mock-refresh-token-demo');
-    toast.success(`Đã đăng nhập bằng tài khoản Demo (${demoUser.displayName})`);
+    toast.success('Bạn đang trải nghiệm EngJoy ở chế độ Khách. Đăng ký để lưu tiến trình.');
     navigate('/');
   };
 
@@ -152,7 +140,7 @@ export default function Login() {
           border: '1px solid var(--bd2)',
           borderRadius: '24px',
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(340px, 100%), 1fr))',
           boxShadow: '0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)',
           overflow: 'hidden',
           position: 'relative',
@@ -459,7 +447,7 @@ export default function Login() {
               }}
             >
               <LoLIcon src={LOL_ICONS.xp} size={15} />
-              <span>Trải nghiệm nhanh với tài khoản Demo</span>
+              <span>Trải nghiệm nhanh ở chế độ Khách</span>
             </button>
           </form>
 
