@@ -178,13 +178,14 @@ export const useProgressStore = create(
       applyServerProfile: (serverData) => {
         if (!serverData) return;
         const profile = serverData.profile || serverData.data || serverData;
-        const totalXp = parseInt(profile.totalXp ?? profile.total_xp, 10) || 0;
+        const progression = profile.progression || profile;
+        const totalXp = parseInt(progression.totalXp ?? progression.total_xp, 10) || 0;
         const currentLevel =
-          parseInt(profile.currentLevel ?? profile.current_level, 10) ||
+          parseInt(progression.currentLevel ?? progression.current_level, 10) ||
           calculateLevelInfo(totalXp).level;
-        const gold = parseInt(profile.gold, 10) || 0;
-        const streak = parseInt(profile.streakDays ?? profile.streak_days, 10) || 0;
-        const wordsLearned = parseInt(profile.wordsLearned ?? profile.words_learned, 10) || 0;
+        const gold = parseInt(progression.gold, 10) || 0;
+        const streak = parseInt(progression.streakDays ?? progression.streak_days, 10) || 0;
+        const wordsLearned = parseInt(progression.wordsLearned ?? progression.words_learned, 10) || 0;
         const savedWords = Array.isArray(profile.savedWords ?? profile.saved_words)
           ? (profile.savedWords ?? profile.saved_words)
           : [];
@@ -199,7 +200,7 @@ export const useProgressStore = create(
           if (Array.isArray(sUnits) && sUnits.length > 0) {
             mergedQuestUnits[qId] = initList.map((initU) => {
               const su = sUnits.find((u) => u.id === initU.id);
-              return su ? { ...initU, status: su.status } : initU;
+              return su ? { ...initU, status: su.status, score: su.score || 0 } : initU;
             });
           }
         });
@@ -306,7 +307,7 @@ export const useProgressStore = create(
       },
 
       // ─── 1. HOÀN THÀNH BÀI HỌC TRONG LỘ TRÌNH ──────────────────────
-      completeUnitLesson: async (questId, unitId, attemptId = null, customKey = null) => {
+      completeUnitLesson: async (questId, unitId, attemptId = null, customKey = null, score = 0) => {
         const unitKey = `${questId}-${unitId}`;
         if (inProgressUnits.has(unitKey)) {
           return { success: false, inProgress: true };
@@ -369,7 +370,7 @@ export const useProgressStore = create(
 
           // GUEST: Chuẩn bị trạng thái cập nhật tiếp theo của Unit & Quest cục bộ
           const updatedUnits = units.map((u) => {
-            if (u.id === unitId) return { ...u, status: 'done' };
+            if (u.id === unitId) return { ...u, status: 'done', score: Math.max(u.score || 0, score) };
             if (u.id === unitId + 1 && u.status === 'locked') return { ...u, status: 'active' };
             return u;
           });
@@ -901,10 +902,49 @@ export const useProgressStore = create(
 
         // 7. Gửi request migration qua API helper (sử dụng migrationKey đã đóng băng trong snapshot)
         try {
-          const res = await progressApi.migrateGuest({
+          // SANITIZE: Backend's snapshotTransportSchema has .unknown(false). 
+          // If the snapshot from localStorage contains legacy fields (e.g. activeQuestIndex),
+          // it will fail validation with a 400 Bad Request. 
+          // We must explicitly extract only the allowed fields.
+          const sanitizedSnapshot = {
             migrationKey: snapshot.migrationKey,
-            snapshot,
+            xp: snapshot.xp,
+            totalXp: snapshot.totalXp,
+            gold: snapshot.gold,
+            streak: snapshot.streak,
+            streakDays: snapshot.streakDays,
+            wordsLearned: snapshot.wordsLearned,
+            savedWords: snapshot.savedWords,
+            questUnits: snapshot.questUnits,
+            ownedItemIds: snapshot.ownedItemIds,
+            equippedIds: snapshot.equippedIds,
+            missions: snapshot.missions,
+            snapshotAt: snapshot.snapshotAt,
+            completedLessons: snapshot.completedLessons,
+            unlockedQuests: snapshot.unlockedQuests,
+            lastResetDate: snapshot.lastResetDate,
+            profile: snapshot.profile,
+          };
+          
+          // Remove undefined fields to keep the payload clean
+          Object.keys(sanitizedSnapshot).forEach(key => {
+            if (sanitizedSnapshot[key] === undefined) {
+              delete sanitizedSnapshot[key];
+            }
           });
+
+          const migrationPayload = {
+            // Backend migration schema requires the idempotency key at the
+            // transport root. Keep the captured snapshot intact so its
+            // questUnits and other validated guest state can be reconstructed.
+            migrationKey: sanitizedSnapshot.migrationKey,
+            snapshot: sanitizedSnapshot,
+          };
+
+          const res = await progressApi.migrateGuest(
+            migrationPayload,
+            { headers: { 'Idempotency-Key': sanitizedSnapshot.migrationKey } }
+          );
 
           // 8. On confirmed HTTP success:
           const raw = res?.data || res;

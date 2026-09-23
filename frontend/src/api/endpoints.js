@@ -15,9 +15,16 @@ export const BACKEND_ENDPOINTS = {
   // Authentication & Session
   AUTH: {
     REGISTER: '/auth/register',
+    VERIFY_EMAIL: '/auth/verify-email',
+    RESEND_CODE: '/auth/resend-code',
     LOGIN: '/auth/login',
     REFRESH: '/auth/refresh',
     ME: '/auth/me',
+  },
+
+  // Account profile & onboarding (AUTH_API.md)
+  PROFILE: {
+    BASE: '/profile',
   },
 
   // User Management
@@ -114,6 +121,7 @@ export const ENDPOINTS = {
   API_BASE: API_BASE_URL,
   BACKEND: BACKEND_ENDPOINTS,
   AUTH: BACKEND_ENDPOINTS.AUTH,
+  PROFILE: BACKEND_ENDPOINTS.PROFILE,
   USERS: BACKEND_ENDPOINTS.USERS,
   PHASES: BACKEND_ENDPOINTS.PHASES,
   PROGRESS: BACKEND_ENDPOINTS.PROGRESS,

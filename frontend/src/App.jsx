@@ -85,6 +85,7 @@ function MainApp() {
 
   const [view, setView] = useState(() => getViewFromPath(location.pathname));
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [learningImmersive, setLearningImmersive] = useState(false);
   const [user, setUser] = useState(INITIAL_USER);
   const bootstrappedAuthRef = useRef(null);
 
@@ -160,16 +161,7 @@ function MainApp() {
   };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        height: "100%",
-        width: "100%",
-        background: "var(--bg)",
-        fontFamily: "'Inter', sans-serif",
-        color: "var(--t1)",
-      }}
-    >
+    <div className="main-app-shell flex h-screen w-full overflow-hidden bg-gray-950">
       {/* Mobile Backdrop */}
       {mobileOpen && (
         <div
@@ -185,40 +177,31 @@ function MainApp() {
       )}
 
       {/* 1. Sidebar Navigation */}
-      <Sidebar
+      {!learningImmersive && <Sidebar
         view={view}
         onViewChange={handleNav}
         user={displayUser}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
-      />
+      />}
 
       {/* 2. Main Content Area */}
-      <main
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          minWidth: 0,
-          height: "100%",
-          overflow: "hidden",
-        }}
-      >
-        <Header
+      <main className="main-app-content flex-1 min-w-0 h-full overflow-y-auto relative transition-all duration-300">
+        {!learningImmersive && <Header
           view={view}
           user={displayUser}
           onViewChange={handleNav}
           onToggleMobile={() => setMobileOpen(!mobileOpen)}
-        />
+        />}
 
         {/* Global Migration Conflict Banner (Phase 2C.4D) */}
         <MigrationConflictBanner />
 
-        <div style={{ flex: 1, overflow: "hidden" }}>
+        <div className="main-app-view">
           {view === "home" && (
             <Dashboard user={displayUser} items={items} missions={missions} onNav={handleNav} />
           )}
-          {view === "learn" && <Learning />}
+          {view === "learn" && <Learning onImmersiveChange={setLearningImmersive} />}
           {view === "codex" && <Dictionary />}
           {view === "arena" && <Arena />}
           {view === "inventory" && (

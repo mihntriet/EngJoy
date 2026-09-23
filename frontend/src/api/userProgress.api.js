@@ -4,6 +4,7 @@ import { ENDPOINTS } from './endpoints.js';
 export const userProgressApi = {
   getMyProgress: (params = {}) => axiosClient.get(ENDPOINTS.PROGRESS.MY_PROGRESS, { params }),
   getProfile: () => axiosClient.get(ENDPOINTS.PROGRESS.PROFILE),
+  updateProfile: (payload) => axiosClient.put(ENDPOINTS.PROFILE.BASE, payload),
   executeAction: (payload) => axiosClient.post(ENDPOINTS.PROGRESS.ACTION, payload),
   startLesson: (payload) => axiosClient.post(ENDPOINTS.PROGRESS.LESSON_START, payload),
   submitLesson: (payload) => axiosClient.post(ENDPOINTS.PROGRESS.LESSON_SUBMIT, payload),
@@ -12,7 +13,7 @@ export const userProgressApi = {
   startPhase: (phaseId) => axiosClient.post(ENDPOINTS.PROGRESS.START, { phaseId }),
   updateLesson: (id, data) => axiosClient.put(ENDPOINTS.PROGRESS.UPDATE_LESSON(id), data),
   complete: (id, score) => axiosClient.put(ENDPOINTS.PROGRESS.COMPLETE(id), { score }),
-  migrateGuest: (payload) => axiosClient.post(ENDPOINTS.PROGRESS.MIGRATE_GUEST, payload),
+  migrateGuest: (payload, config) => axiosClient.post(ENDPOINTS.PROGRESS.MIGRATE_GUEST, payload, config),
 };
 
 export const progressApi = userProgressApi;
