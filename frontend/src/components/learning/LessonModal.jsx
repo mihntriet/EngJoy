@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { getLessonContent } from '../../constants/lessonData.js';
 import Chip from '../common/Chip';
 import Bar from '../common/Bar';
+import ArtifactViewer from './ArtifactViewer';
+import RunicChamber from './RunicChamber';
 
 const PASS_THRESHOLD = 60;
 
@@ -32,6 +34,7 @@ export default function LessonModal({
   onStartAttempt,
   onSubmitAttempt,
   isAuthenticated = false,
+  initialQuizPhase = 'briefing',
 }) {
   const startLessonAttempt = onStartAttempt;
   const submitLessonAttempt = onSubmitAttempt;
@@ -254,6 +257,10 @@ export default function LessonModal({
   const currentQ = questions[quizIndex];
   const isPassed = score >= PASS_THRESHOLD;
 
+  if (step === 'quiz' && currentQ) {
+    return <RunicChamber lessonData={lessonData} vocabulary={vocabulary} initialPhase={initialQuizPhase} question={currentQ} questionIndex={quizIndex} totalQuestions={questions.length} selectedAnswer={selectedAnswer} isAnswerSubmitted={isAnswerSubmitted} isSubmitting={isSubmitting} onRetreat={onClose} onSelectAnswer={handleSelectAnswer} onAdvance={handleNextQuestion} />;
+  }
+
   return (
     <div style={styles.overlay} role="dialog" aria-modal="true" aria-labelledby="lesson-modal-title">
       <div style={styles.modal}>
@@ -325,69 +332,15 @@ export default function LessonModal({
 
         {/* ─── STEP 2: VOCABULARY FLASHCARDS ───────────────────────────── */}
         {step === 'flashcards' && currentCard && (
-          <div style={styles.body}>
-            {/* Progress indicator */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={styles.progressRow}>
-                <span style={styles.progressLabel}>
-                  Thẻ từ vựng {flashcardIndex + 1} / {vocabulary.length}
-                </span>
-                <span style={styles.progressValue}>
-                  {Math.round(((flashcardIndex + 1) / vocabulary.length) * 100)}%
-                </span>
-              </div>
-              <Bar pct={((flashcardIndex + 1) / vocabulary.length) * 100} color="var(--indigo)" height={6} />
-            </div>
-
-            {/* Flashcard container */}
-            <div style={styles.flashcard}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <Chip color="var(--gold)" bg="var(--gold-d)">
-                  TỪ VỰNG CỐT LÕI #{flashcardIndex + 1}
-                </Chip>
-                <button
-                  onClick={() => speakText(currentCard.word)}
-                  style={styles.audioBtn}
-                  title="Nghe phát âm chuẩn"
-                  aria-label={`Nghe phát âm từ ${currentCard.word}`}
-                >
-                  🔊 Nghe
-                </button>
-              </div>
-
-              <div style={styles.wordTitle}>{currentCard.word}</div>
-              <div style={styles.phoneticText}>{currentCard.phonetic}</div>
-
-              <div style={styles.meaningBox}>
-                <div style={styles.meaningLabel}>Ý nghĩa:</div>
-                <div style={styles.meaningText}>{currentCard.meaning}</div>
-              </div>
-
-              <div style={styles.exampleBox}>
-                <div style={styles.exampleLabel}>Ví dụ thực tế:</div>
-                <div style={styles.exampleText}>"{currentCard.example}"</div>
-              </div>
-            </div>
-
-            {/* Flashcard controls */}
-            <div style={styles.footer}>
-              <button
-                onClick={handlePrevFlashcard}
-                disabled={flashcardIndex === 0}
-                style={{
-                  ...styles.btnSecondary,
-                  opacity: flashcardIndex === 0 ? 0.4 : 1,
-                  cursor: flashcardIndex === 0 ? 'not-allowed' : 'pointer',
-                }}
-              >
-                ← Quay lại
-              </button>
-
-              <button onClick={handleNextFlashcard} style={styles.btnPrimary}>
-                {flashcardIndex === vocabulary.length - 1 ? 'Vào thử thách ⚔️' : 'Từ tiếp theo ➜'}
-              </button>
-            </div>
-          </div>
+          <ArtifactViewer
+            card={currentCard}
+            index={flashcardIndex}
+            total={vocabulary.length}
+            onAbsorb={handleNextFlashcard}
+            onPrevious={handlePrevFlashcard}
+            onClose={onClose}
+            onSpeak={() => speakText(currentCard.word)}
+          />
         )}
 
         {/* ─── STEP 3: PRACTICE QUIZ ──────────────────────────────────── */}
